@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "SpaceVerse",
+    "slug": "spaceverse",
+    "version": "0.1.0",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "spaceverse",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#050816"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
+

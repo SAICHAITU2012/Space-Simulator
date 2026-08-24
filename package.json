@@ -1,0 +1,38 @@
+{
+  "name": "spaceverse",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "start:lan": "expo start --lan",
+    "start:lan:8082": "expo start --lan --port 8082",
+    "start:tunnel": "expo start --tunnel",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "export:web": "expo export --platform web --output-dir dist-web",
+    "preview:web": "python3 -m http.server 8090 -d dist-web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~55.0.12",
+    "@react-three/fiber": "^9.0.0",
+    "expo": "^55.0.0",
+    "expo-asset": "~55.0.19",
+    "expo-gl": "~55.0.17",
+    "expo-haptics": "~55.0.17",
+    "expo-linear-gradient": "~55.0.17",
+    "expo-sensors": "~55.0.18",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-web": "~0.21.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/three": "^0.170.0",
+    "typescript": "^5.9.0"
+  }
+}
