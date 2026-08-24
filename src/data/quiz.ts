@@ -6,6 +6,7 @@ export type QuizQuestion = {
   explanation: string;
   emoji: string;
   category: "planets" | "missions" | "physics" | "stars" | "general";
+  objectId?: string;
 };
 
 export const QUIZ_QUESTIONS: QuizQuestion[] = [
@@ -16,7 +17,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 1,
     explanation: "Olympus Mons on Mars is 22 km high — nearly 3× taller than Mount Everest — and so wide you couldn't see its edges from the center.",
     emoji: "🌋",
-    category: "planets"
+    category: "planets",
+    objectId: "mars"
   },
   {
     id: "q2",
@@ -25,7 +27,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 2,
     explanation: "Venus rotates retrograde (backwards). On Venus, the Sun rises in the west and sets in the east.",
     emoji: "🔄",
-    category: "planets"
+    category: "planets",
+    objectId: "venus"
   },
   {
     id: "q3",
@@ -43,7 +46,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 2,
     explanation: "The James Webb Space Telescope can see galaxies formed just 300 million years after the Big Bang, far deeper than Hubble.",
     emoji: "🔭",
-    category: "missions"
+    category: "missions",
+    objectId: "jwst"
   },
   {
     id: "q5",
@@ -52,7 +56,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 2,
     explanation: "Mars has two tiny moons: Phobos and Deimos, named after the Greek gods of fear and dread.",
     emoji: "🔴",
-    category: "planets"
+    category: "planets",
+    objectId: "mars"
   },
   {
     id: "q6",
@@ -61,7 +66,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 3,
     explanation: "India's Chandrayaan-3 made history on August 23, 2023, as the first mission to soft-land near the lunar south pole.",
     emoji: "🇮🇳",
-    category: "missions"
+    category: "missions",
+    objectId: "chandrayaan3"
   },
   {
     id: "q7",
@@ -79,7 +85,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 3,
     explanation: "Neptune's winds exceed 2,100 km/h — faster than the speed of sound on Earth.",
     emoji: "💨",
-    category: "planets"
+    category: "planets",
+    objectId: "neptune"
   },
   {
     id: "q9",
@@ -106,7 +113,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 3,
     explanation: "Jupiter is so large that over 1,300 Earths could fit inside it. It contains more than twice the mass of all other planets combined.",
     emoji: "🟠",
-    category: "planets"
+    category: "planets",
+    objectId: "jupiter"
   },
   {
     id: "q12",
@@ -124,7 +132,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 1,
     explanation: "Launched in 1977, Voyager 1 has crossed into interstellar space and is over 23 billion km from Earth — the most distant human artifact.",
     emoji: "🚀",
-    category: "missions"
+    category: "missions",
+    objectId: "voyager1"
   },
   {
     id: "q14",
@@ -133,7 +142,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 0,
     explanation: "Saturn has a density of only 687 kg/m³ — less than water (1000 kg/m³). If you could find an ocean big enough, Saturn would float!",
     emoji: "💧",
-    category: "planets"
+    category: "planets",
+    objectId: "saturn"
   },
   {
     id: "q15",
@@ -165,7 +175,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 1,
     explanation: "Mangalyaan (Mars Orbiter Mission) reached Mars on its first attempt in 2014, making India the first Asian nation to successfully orbit Mars.",
     emoji: "🇮🇳",
-    category: "missions"
+    category: "missions",
+    objectId: "mangalyaan"
   },
   {
     id: "q18",
@@ -174,7 +185,8 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 2,
     explanation: "Uranus is classified as an ice giant — its interior is made mostly of icy materials like water, methane, and ammonia, unlike gas giants Jupiter and Saturn.",
     emoji: "🔵",
-    category: "planets"
+    category: "planets",
+    objectId: "uranus"
   },
   {
     id: "q19",
@@ -197,6 +209,67 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
     correctIndex: 1,
     explanation: "Jupiter's Great Red Spot is a storm that has been raging for over 350 years. It's so large that two Earths could fit inside it.",
     emoji: "🌀",
-    category: "planets"
+    category: "planets",
+    objectId: "jupiter"
+  },
+  {
+    id: "q21",
+    question: "What is special about Europa?",
+    options: ["It has rings", "A subsurface ocean under ice", "It is a gas giant", "It is hotter than Venus"],
+    correctIndex: 1,
+    explanation: "Europa's icy crust covers a global saltwater ocean — a prime target in the search for life.",
+    emoji: "🧊",
+    category: "planets",
+    objectId: "europa"
+  },
+  {
+    id: "q22",
+    question: "Titan's lakes are mostly made of...",
+    options: ["Water", "Lava", "Methane and ethane", "Liquid nitrogen"],
+    correctIndex: 2,
+    explanation: "Titan is the only moon with stable surface liquids, but they are hydrocarbons, not water.",
+    emoji: "🟠",
+    category: "planets",
+    objectId: "titan"
+  },
+  {
+    id: "q23",
+    question: "The ISS orbits Earth roughly how often?",
+    options: ["Once a week", "Once a day", "About 16 times a day", "Once a month"],
+    correctIndex: 2,
+    explanation: "At about 400 km altitude the station completes an orbit in ~93 minutes — about 16 sunrises per crew day.",
+    emoji: "🛸",
+    category: "missions",
+    objectId: "iss"
+  },
+  {
+    id: "q24",
+    question: "NavIC is...",
+    options: ["A Mars rover", "India's regional satellite navigation system", "A crew capsule", "A lunar lander"],
+    correctIndex: 1,
+    explanation: "NavIC (IRNSS) is ISRO's GNSS covering India and a surrounding region, independent of GPS.",
+    emoji: "📍",
+    category: "missions",
+    objectId: "navic"
+  },
+  {
+    id: "q25",
+    question: "Aditya-L1 studies the Sun from...",
+    options: ["Low Earth orbit", "The lunar south pole", "The L1 Lagrange point", "Mars orbit"],
+    correctIndex: 2,
+    explanation: "L1 is about 1.5 million km sunward of Earth, so Aditya-L1 can watch the Sun without Earth eclipses.",
+    emoji: "☀️",
+    category: "missions",
+    objectId: "adityal1"
+  },
+  {
+    id: "q26",
+    question: "Ceres is located in...",
+    options: ["The Kuiper Belt", "The asteroid belt", "Orbit around Jupiter", "Interstellar space"],
+    correctIndex: 1,
+    explanation: "Ceres is the largest body in the main asteroid belt between Mars and Jupiter, and a dwarf planet.",
+    emoji: "🪨",
+    category: "planets",
+    objectId: "ceres"
   }
 ];

@@ -52,9 +52,9 @@ export const PLANETS: Planet[] = [
     atmosphere: "Trace — exosphere only",
     fact: "Mercury races around the Sun faster than any other planet, but one day there lasts almost two Mercury years.",
     funFacts: [
-      "Despite being closest to the Sun, Mercury is NOT the hottest planet.",
+      "Despite being closest to the Sun, Mercury is NOT the hottest planet — Venus is.",
       "Mercury has water ice hidden in permanently shadowed craters at its poles.",
-      "A year on Mercury is only 88 Earth days — shorter than its own day!"
+      "A year on Mercury is only 88 Earth days — shorter than its own day of 176 Earth days of sunlight."
     ]
   },
   {

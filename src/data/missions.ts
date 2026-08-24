@@ -116,5 +116,31 @@ export const MISSIONS: Mission[] = [
     status: "active",
     story: "Launched in 1990 and still operational, Hubble has fundamentally changed our understanding of the universe. It determined the age of the universe, confirmed dark energy's existence, discovered that nearly every galaxy has a supermassive black hole, and produced iconic images like the Pillars of Creation.",
     highlight: "34+ years of cosmic discovery"
+  },
+  {
+    id: "gaganyaan",
+    name: "Gaganyaan",
+    agency: "ISRO",
+    country: "🇮🇳",
+    agencyColor: "#ff7f00",
+    year: 2024,
+    destination: "Low Earth Orbit",
+    destinationEmoji: "👨‍🚀",
+    status: "active",
+    story: "Gaganyaan is India's human spaceflight programme. The TV-D1 abort test in 2023 proved the crew module can escape a failing rocket; uncrewed orbital flights come next, then a three-member crew on a short LEO mission. The programme is building the human-rated LVM3, a crew module, and the Gaganyaan astronaut corps.",
+    highlight: "India's path to sending crew to orbit"
+  },
+  {
+    id: "astrosat",
+    name: "Astrosat",
+    agency: "ISRO",
+    country: "🇮🇳",
+    agencyColor: "#ff7f00",
+    year: 2015,
+    destination: "Low Earth Orbit",
+    destinationEmoji: "✨",
+    status: "active",
+    story: "Astrosat is India's first dedicated astronomy satellite, observing in UV, optical, and X-rays together. It opened space astronomy to a wide Indian university network and still returns data on compact objects and nearby galaxies.",
+    highlight: "India's first space observatory"
   }
 ];

@@ -31,6 +31,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Canvas, useFrame, useThree } from "@react-three/fiber/native";
@@ -42,14 +43,17 @@ import * as THREE from "three";
 import { PLANETS, Planet, PLANET_BY_ID } from "./src/data/spaceData";
 import { LabInputs, calculateLabOutcome } from "./src/lib/physics";
 import { MISSIONS } from "./src/data/missions";
-import { CONSTELLATIONS } from "./src/data/constellations";
 import { QUIZ_QUESTIONS } from "./src/data/quiz";
 import { EXPERIMENTS } from "./src/data/experiments";
-import { AGENCIES, Agency, AGENCY_BY_ID } from "./src/data/agencies";
+import { AGENCIES, AGENCY_BY_ID } from "./src/data/agencies";
 import {
-  SATELLITES, Satellite, SATELLITE_BY_ID, SATELLITES_BY_AGENCY, satVisualRadius,
+  SATELLITES, Satellite, SATELLITE_BY_ID, SATELLITES_BY_AGENCY, satVisualRadius, satsForEarthHub,
 } from "./src/data/satellites";
-import { TIMELINE, TimelineEvent } from "./src/data/timeline";
+import { TIMELINE } from "./src/data/timeline";
+import { MOONS, MOON_BY_ID, MOONS_BY_PLANET, Moon } from "./src/data/moons";
+import { DWARF_PLANETS, DWARF_BY_ID, DwarfPlanet } from "./src/data/dwarfs";
+import { PLANET_TEXTURE_KEY, TEXTURE_CREDIT, useBodyTexture } from "./src/lib/textures";
+import { askCosmo, CosmoAction } from "./src/lib/cosmo";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Section =
@@ -106,7 +110,11 @@ export default function App() {
   const [paused,            setPaused]            = useState(false);
   const [speed,             setSpeed]             = useState(1);
   const [motionEnabled,     setMotionEnabled]     = useState(false);
-  const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | null>(null);
+  const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | null>(null);
+  const [selectedMoonId,    setSelectedMoonId]    = useState<string | null>(null);
+  const [selectedDwarfId,   setSelectedDwarfId]   = useState<string | null>(null);
+  const [exploredIds,       setExploredIds]       = useState<string[]>(["earth"]);
+  const [showCredits,       setShowCredits]       = useState(false);
   const [activeExperimentId,setActiveExperimentId]= useState<string | null>(null);
   const [labInputs,         setLabInputs]         = useState<LabInputs>({
     massScale: 1, radiusScale: 1, velocityScale: 1,
@@ -127,6 +135,8 @@ export default function App() {
 
   const selectedPlanet = PLANET_BY_ID[selectedPlanetId] ?? PLANET_BY_ID.earth;
   const selectedSat    = selectedSatId ? SATELLITE_BY_ID[selectedSatId] : null;
+  const selectedMoon   = selectedMoonId ? MOON_BY_ID[selectedMoonId] : null;
+  const selectedDwarf  = selectedDwarfId ? DWARF_BY_ID[selectedDwarfId] : null;
   const selectedAgency = selectedAgencyId ? AGENCY_BY_ID[selectedAgencyId] : null;
   const agencyFilter   = selectedAgencyId
     ? SATELLITES.filter(s => s.agencyId === selectedAgencyId)
@@ -143,8 +153,8 @@ export default function App() {
     Gyroscope.setUpdateInterval(80);
     const sub = Gyroscope.addListener(({ x, y }) => {
       motionRef.current = {
-        x: THREE.MathUtils.clamp(x, -1.2, 1.2),
-        y: THREE.MathUtils.clamp(y, -1.2, 1.2),
+        x: THREE.MathUtils.clamp(x * 0.55, -0.7, 0.7),
+        y: THREE.MathUtils.clamp(y * 0.55, -0.7, 0.7),
       };
     });
     return () => sub.remove();
@@ -218,20 +228,57 @@ export default function App() {
     Animated.spring(panelAnim, { toValue: open ? PANEL_OPEN : PANEL_PEEK, tension: 85, friction: 13, useNativeDriver: false }).start();
   };
 
+  const markExplored = useCallback((id: string) => {
+    setExploredIds(prev => (prev.includes(id) ? prev : [...prev, id]));
+  }, []);
+
   const onPlanetTapped = useCallback((id: string) => {
     const p = PLANET_BY_ID[id]; if (!p) return;
     setSelectedPlanetId(id);
+    setSelectedMoonId(null);
+    setSelectedDwarfId(null);
     setFloatingCard("planet");
+    markExplored(id);
     camRef.current.zoom = THREE.MathUtils.clamp(p.orbitRadius * 1.28 + 7, 14, 62);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-  }, []);
+  }, [markExplored]);
+
+  const onMoonTapped = useCallback((id: string) => {
+    const m = MOON_BY_ID[id]; if (!m) return;
+    setSelectedMoonId(id);
+    setSelectedPlanetId(m.planetId);
+    setSelectedDwarfId(null);
+    setFloatingCard("moon");
+    markExplored(id);
+    markExplored(m.planetId);
+    const p = PLANET_BY_ID[m.planetId];
+    if (p) camRef.current.zoom = THREE.MathUtils.clamp(p.orbitRadius * 1.15 + 6, 12, 58);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }, [markExplored]);
+
+  const onDwarfTapped = useCallback((id: string) => {
+    const d = DWARF_BY_ID[id]; if (!d) return;
+    setSelectedDwarfId(id);
+    setSelectedMoonId(null);
+    setFloatingCard("dwarf");
+    markExplored(id);
+    camRef.current.zoom = THREE.MathUtils.clamp(d.orbitRadius * 1.2 + 6, 16, 80);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }, [markExplored]);
+
+  const onSolarTapped = useCallback((id: string) => {
+    if (PLANET_BY_ID[id]) onPlanetTapped(id);
+    else if (MOON_BY_ID[id]) onMoonTapped(id);
+    else if (DWARF_BY_ID[id]) onDwarfTapped(id);
+  }, [onPlanetTapped, onMoonTapped, onDwarfTapped]);
 
   const onSatTapped = useCallback((id: string) => {
     if (!SATELLITE_BY_ID[id]) return;
     setSelectedSatId(id);
     setFloatingCard("satellite");
+    markExplored(id);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-  }, []);
+  }, [markExplored]);
 
   const activateExperiment = useCallback((eid: string) => {
     const exp = EXPERIMENTS.find(e => e.id === eid); if (!exp) return;
@@ -246,6 +293,16 @@ export default function App() {
   }, []);
 
   const switchToSection = (s: Section) => { setSection(s); if (!panelIsOpen.current) snapPanel(true); };
+
+  const applyCosmoAction = useCallback((action: CosmoAction) => {
+    if (action.type === "openSection") switchToSection(action.section);
+    if (action.type === "focusPlanet") { onPlanetTapped(action.id); switchToSection("universe"); }
+    if (action.type === "focusMoon") { onMoonTapped(action.id); switchToSection("universe"); }
+    if (action.type === "focusDwarf") { onDwarfTapped(action.id); switchToSection("universe"); }
+    if (action.type === "focusSatellite") { onSatTapped(action.id); switchToSection("earthhub"); }
+    if (action.type === "filterAgency") { setSelectedAgencyId(action.id); switchToSection("earthhub"); }
+    if (action.type === "startExperiment") activateExperiment(action.id);
+  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onSatTapped, activateExperiment]);
 
   if (!entered) {
     return <HomeScreen onEnter={() => setEntered(true)} onSection={s => { setSection(s as Section); setEntered(true); }} />;
@@ -262,7 +319,7 @@ export default function App() {
         <Canvas
           camera={{ position: [0, 18, 38], fov: 50, near: 0.01, far: 2000 }}
           gl={{
-            antialias: true,
+            antialias: false,
             logarithmicDepthBuffer: true,
             powerPreference: "high-performance",
             alpha: false,
@@ -292,7 +349,7 @@ export default function App() {
                 pendingTap={pendingTap}
                 planetScreenPos={planetScreenPos}
                 labInputs={labInputs}
-                onPlanetTapped={onPlanetTapped}
+                onPlanetTapped={onSolarTapped}
               />
             )}
           </Suspense>
@@ -310,6 +367,7 @@ export default function App() {
             <View style={ui.topRight}>
               {!showEarthHub && <GlassBtn label={paused ? "▶" : "⏸"} onPress={() => setPaused(v => !v)} />}
               <GlassBtn label={motionEnabled ? "🧭" : "👆"} onPress={() => setMotionEnabled(v => !v)} />
+              <GlassBtn label="i" onPress={() => setShowCredits(v => !v)} />
               <GlassBtn label="⌂" onPress={() => {
                 camRef.current = showEarthHub ? { yaw: 0.2, pitch: 0.5, zoom: 14 } : { yaw: 0.18, pitch: 0.36, zoom: 38 };
                 setFloatingCard(null);
@@ -331,7 +389,7 @@ export default function App() {
                 <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
               </Pressable>
             </View>
-            <Text style={ui.fcFact} numberOfLines={2}>{selectedPlanet.funFacts[0]}</Text>
+            <Text style={ui.fcFact} numberOfLines={3}>{selectedPlanet.funFacts[0]}</Text>
             <View style={ui.fcBtns}>
               <Pressable style={ui.fcBtn} onPress={() => { setSection("universe"); snapPanel(true); }}>
                 <Text style={ui.fcBtnText}>🔍  Explore</Text>
@@ -343,7 +401,53 @@ export default function App() {
           </View>
         )}
 
-        {/* Floating card — satellite */}
+        {floatingCard === "moon" && selectedMoon && !showEarthHub && (
+          <View style={ui.floatingCard} pointerEvents="auto">
+            <View style={ui.fcRow}>
+              <Text style={ui.fcEmoji}>{selectedMoon.emoji}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={ui.fcName}>{selectedMoon.name}</Text>
+                <Text style={ui.fcNick}>{selectedMoon.nickname.toUpperCase()}  ·  {PLANET_BY_ID[selectedMoon.planetId]?.name.toUpperCase()}</Text>
+              </View>
+              <Pressable onPress={() => setFloatingCard(null)}>
+                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
+              </Pressable>
+            </View>
+            <Text style={ui.fcFact} numberOfLines={3}>{selectedMoon.fact}</Text>
+            <Pressable style={[ui.fcBtn, ui.fcBtnCyan]} onPress={() => { setSection("universe"); snapPanel(true); }}>
+              <Text style={[ui.fcBtnText, { color: C.cyan }]}>🔍  Moon facts</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {floatingCard === "dwarf" && selectedDwarf && !showEarthHub && (
+          <View style={ui.floatingCard} pointerEvents="auto">
+            <View style={ui.fcRow}>
+              <Text style={ui.fcEmoji}>{selectedDwarf.emoji}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={ui.fcName}>{selectedDwarf.name}</Text>
+                <Text style={ui.fcNick}>{selectedDwarf.nickname.toUpperCase()}</Text>
+              </View>
+              <Pressable onPress={() => setFloatingCard(null)}>
+                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
+              </Pressable>
+            </View>
+            <Text style={ui.fcFact} numberOfLines={3}>{selectedDwarf.fact}</Text>
+          </View>
+        )}
+
+        {showCredits && (
+          <View style={ui.floatingCard} pointerEvents="auto">
+            <View style={ui.fcRow}>
+              <Text style={ui.fcName}>Credits</Text>
+              <Pressable onPress={() => setShowCredits(false)}>
+                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
+              </Pressable>
+            </View>
+            <Text style={ui.fcFact}>{TEXTURE_CREDIT}</Text>
+            <Text style={ui.fcFact}>Facts compiled from NASA, ESA, and ISRO public materials. Physics runs on-device. Cosmo uses Groq when online.</Text>
+          </View>
+        )}
         {floatingCard === "satellite" && selectedSat && (
           <View style={ui.floatingCard} pointerEvents="auto">
             <View style={ui.fcRow}>
@@ -425,14 +529,14 @@ export default function App() {
 
           {/* Content */}
           <ScrollView style={ui.sheetContent} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
-            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} onFocus={id => { setSelectedPlanetId(id); const r = PLANET_BY_ID[id]?.orbitRadius; camRef.current.zoom = THREE.MathUtils.clamp(r !== undefined ? r * 1.28 + 7 : 38, 14, 62); Haptics.selectionAsync().catch(() => undefined); }} speed={speed} setSpeed={setSpeed} zoomIn={() => { camRef.current.zoom = Math.max(8, camRef.current.zoom - 6); }} zoomOut={() => { camRef.current.zoom = Math.min(90, camRef.current.zoom + 6); }} />}
-            {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { setSelectedSatId(id); setFloatingCard("satellite"); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
+            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} speed={speed} setSpeed={setSpeed} zoomIn={() => { camRef.current.zoom = Math.max(8, camRef.current.zoom - 6); }} zoomOut={() => { camRef.current.zoom = Math.min(90, camRef.current.zoom + 6); }} />}
+            {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { onSatTapped(id); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
             {section === "agencies" && <AgenciesPanel selectedAgencyId={selectedAgencyId} onSelect={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} />}
             {section === "missions" && <MissionsPanel />}
             {section === "timeline" && <TimelinePanel />}
             {section === "lab" && <LabPanel planet={selectedPlanet} inputs={labInputs} setInputs={setLabInputs} outcome={labOutcome} activeExperimentId={activeExperimentId} setActiveExperimentId={setActiveExperimentId} onActivateExperiment={activateExperiment} />}
-            {section === "cosmo" && <CosmoPanel onActivateExperiment={activateExperiment} onSection={switchToSection} onSelectAgency={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} />}
-            {section === "quiz" && <QuizPanel />}
+            {section === "cosmo" && <CosmoPanel onActivateExperiment={activateExperiment} onSection={switchToSection} onSelectAgency={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} onAction={applyCosmoAction} />}
+            {section === "quiz" && <QuizPanel exploredIds={exploredIds} />}
             <View style={{ height: 32 }} />
           </ScrollView>
         </Animated.View>
@@ -552,11 +656,16 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
             <Text style={hs.killFeatTag}>✨  KILLER FEATURE</Text>
             <Text style={hs.killFeatTitle}>Earth Hub — Tap any satellite in orbit</Text>
             <Text style={hs.killFeatText}>
-              See 15 key satellites orbiting Earth in real-time 3D. Filter by agency. Tap to explore full mission details.
+              See key satellites orbiting Earth in 3D. Filter by agency. Tap to explore full mission details. Planet maps from Solar System Scope (CC BY 4.0). Physics runs on this phone.
             </Text>
             <Pressable onPress={() => onSection("earthhub")}>
               <Text style={hs.killFeatCta}>Open Earth Hub →</Text>
             </Pressable>
+          </View>
+          <View style={[hs.killFeat, { marginTop: 12 }]}>
+            <Text style={hs.killFeatTag}>MAPS & DATA</Text>
+            <Text style={hs.killFeatTitle}>Public textures, on-device sim</Text>
+            <Text style={hs.killFeatText}>{TEXTURE_CREDIT} Facts from NASA, ESA, and ISRO public pages. Cosmo uses Groq when online; exploration works offline.</Text>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -594,6 +703,7 @@ function SolarScene({
       <pointLight position={[0, 28, 0]} intensity={12} color="#2040cc" decay={2} />
       <CameraRig camRef={camRef} motionRef={motionRef} isInteracting={isInteracting} earthHub={false} />
       <ObjectTapDetector pendingTap={pendingTap} screenPos={planetScreenPos} onTapped={onPlanetTapped} />
+      <StarSky />
       <MilkyWayBand />
       <StarField />
       <Sun />
@@ -605,6 +715,9 @@ function SolarScene({
           labInputs={pl.id === selectedId ? labInputs : undefined}
           screenPos={planetScreenPos}
         />
+      ))}
+      {DWARF_PLANETS.map(d => (
+        <OrbitingDwarf key={d.id} dwarf={d} selected={d.id === selectedId} paused={paused} speed={speed} screenPos={planetScreenPos} />
       ))}
     </>
   );
@@ -629,24 +742,21 @@ function EarthHubScene({
     camRef.current = { yaw: 0.3, pitch: 0.5, zoom: 13 };
   }, []);
 
-  const visibleSats = agencyFilter ?? SATELLITES;
+  const visibleSats = satsForEarthHub(agencyFilter ?? SATELLITES);
 
   return (
     <>
-      {/* Directional sun for Earth Hub — creates real day/night terminator on Earth */}
       <ambientLight intensity={0.08} />
-      {/* Key light — Sun direction (comes from top-right, tilted 23.5° for Earth's axial tilt) */}
       <directionalLight
         position={[12, 4, 8]}
         intensity={2.2}
         color="#fff6e0"
       />
-      {/* Earth-shine fill — faint blue bounce light from Earth itself */}
       <directionalLight position={[-5, -2, -5]} intensity={0.12} color="#2244aa" />
-      {/* Cold space fill — very dim, stops the dark side being pure black */}
       <hemisphereLight args={["#001133", "#000011", 0.06]} />
       <CameraRig camRef={camRef} motionRef={motionRef} isInteracting={isInteracting} earthHub={true} />
       <ObjectTapDetector pendingTap={pendingTap} screenPos={satScreenPos} onTapped={onSatTapped} />
+      <StarSky dim />
       <StarField dim />
       <MilkyWayBand />
       {/* Earth */}
@@ -668,20 +778,16 @@ function EarthHubScene({
 // ── Earth ─────────────────────────────────────────────────────────────────────
 function Earth() {
   const earthRef  = useRef<THREE.Mesh>(null);
-  const cloudRef  = useRef<THREE.Mesh>(null);
   const cloud2Ref = useRef<THREE.Mesh>(null);
   const atmoRef   = useRef<THREE.Mesh>(null);
   const limb1Ref  = useRef<THREE.Mesh>(null);
   const limb2Ref  = useRef<THREE.Mesh>(null);
+  const dayMap = useBodyTexture("earth");
 
   useFrame((state, delta) => {
     const t = state.clock.getElapsedTime();
-    // Earth rotates — realistic ~24hr period scaled for visual
     if (earthRef.current)  earthRef.current.rotation.y  += delta * 0.068;
-    // Clouds rotate slightly faster — simulates stratospheric winds
-    if (cloudRef.current)  cloudRef.current.rotation.y  += delta * 0.085;
-    if (cloud2Ref.current) cloud2Ref.current.rotation.y -= delta * 0.055; // counter-rotating band
-    // Atmosphere limb pulse — simulates aurora-like variation
+    if (cloud2Ref.current) cloud2Ref.current.rotation.y -= delta * 0.055;
     if (atmoRef.current)  (atmoRef.current.material  as THREE.MeshBasicMaterial).opacity = 0.22 + Math.sin(t * 0.55) * 0.06;
     if (limb1Ref.current) (limb1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.11 + Math.sin(t * 0.38 + 1.2) * 0.03;
     if (limb2Ref.current) (limb2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.22 + 2.5) * 0.012;
@@ -689,38 +795,22 @@ function Earth() {
 
   return (
     <group>
-      {/* ── Layer 1: Earth Surface (PBR) ────────────────────────────────────
-          MeshStandardMaterial gives realistic specular highlights on oceans
-          and diffuse scattering on continents — the same principle as NASA Eyes */}
       <mesh ref={earthRef}>
-        <sphereGeometry args={[2.2, 72, 72]} />
+        <sphereGeometry args={[2.2, 48, 48]} />
         <meshStandardMaterial
-          color="#1a4fa8"        /* deep ocean blue */
-          roughness={0.62}       /* oceans ~0.3, averaged with land ~0.85 */
-          metalness={0.04}       /* slight specularity for water glint */
-          emissive="#000820"     /* faint blue self-glow — night side city lights */
-          emissiveIntensity={0.4}
+          map={dayMap ?? undefined}
+          color={dayMap ? "#ffffff" : "#1a4fa8"}
+          roughness={0.62}
+          metalness={0.04}
+          emissive="#000820"
+          emissiveIntensity={0.25}
         />
       </mesh>
-
-      {/* ── Layer 2: Continent patches (additive overlay gives land tone) ─── */}
-      <mesh ref={cloudRef} rotation={[0.12, 0, 0.05]}>
-        <sphereGeometry args={[2.21, 48, 48]} />
-        <meshBasicMaterial
-          color="#3a7a30"   /* vegetation green mixed with desert tan */
-          transparent opacity={0.14}
-          blending={THREE.AdditiveBlending} depthWrite={false}
-        />
-      </mesh>
-
-      {/* ── Layer 3: Cloud deck — realistic cloud layer ──────────────────────
-          Rotates faster than surface (stratospheric winds ~10% faster)
-          Tilted slightly to break perfect symmetry — looks natural */}
       <mesh ref={cloud2Ref} rotation={[0.08, 0.3, -0.06]}>
-        <sphereGeometry args={[2.235, 48, 48]} />
+        <sphereGeometry args={[2.235, 32, 32]} />
         <meshBasicMaterial
           color="#d8eaff"
-          transparent opacity={0.18}
+          transparent opacity={0.12}
           depthWrite={false}
         />
       </mesh>
@@ -851,6 +941,7 @@ function CameraRig({
   const { camera } = useThree();
   const lastInteract = useRef(0);
   const autoYaw      = useRef(camRef.current.yaw);
+  const dampMotion   = useRef({ x: 0, y: 0 });
 
   useFrame((_, delta) => {
     if (isInteracting.current) lastInteract.current = Date.now();
@@ -861,8 +952,10 @@ function CameraRig({
       autoYaw.current = camRef.current.yaw;
     }
 
-    const yaw   = camRef.current.yaw   + motionRef.current.y * 0.1;
-    const pitch = camRef.current.pitch + motionRef.current.x * 0.07;
+    dampMotion.current.x += (motionRef.current.x - dampMotion.current.x) * 0.12;
+    dampMotion.current.y += (motionRef.current.y - dampMotion.current.y) * 0.12;
+    const yaw   = camRef.current.yaw   + dampMotion.current.y * 0.08;
+    const pitch = camRef.current.pitch + dampMotion.current.x * 0.05;
     const r     = camRef.current.zoom;
     camera.position.lerp(
       new THREE.Vector3(
@@ -900,7 +993,6 @@ function ObjectTapDetector({
 
 // ── Sun — 6-layer animated corona + solar shimmer ────────────────────────────
 function Sun() {
-  // layer refs: surface shimmer, inner corona, mid corona, outer halo, wide halo, mega halo
   const surf = useRef<THREE.Mesh>(null);
   const l1   = useRef<THREE.Mesh>(null);
   const l2   = useRef<THREE.Mesh>(null);
@@ -908,6 +1000,7 @@ function Sun() {
   const l4   = useRef<THREE.Mesh>(null);
   const l5   = useRef<THREE.Mesh>(null);
   const sunCore = useRef<THREE.Mesh>(null);
+  const sunMap = useBodyTexture("sun");
 
   useFrame(({ clock }) => {
     const t  = clock.getElapsedTime();
@@ -940,10 +1033,12 @@ function Sun() {
     <group>
       {/* Core — PBR emissive for realistic glowing ball */}
       <mesh ref={sunCore}>
-        <sphereGeometry args={[3.2, 64, 64]} />
+        <sphereGeometry args={[3.2, 48, 48]} />
         <meshStandardMaterial
-          color="#fff8d0"
+          map={sunMap ?? undefined}
+          color={sunMap ? "#ffffff" : "#fff8d0"}
           emissive="#ffb200"
+          emissiveMap={sunMap ?? undefined}
           emissiveIntensity={1.4}
           roughness={0.85}
           metalness={0.0}
@@ -984,6 +1079,25 @@ function Sun() {
 }
 
 // ── Star Field ────────────────────────────────────────────────────────────────
+function StarSky({ dim }: { dim?: boolean }) {
+  const milky = useBodyTexture("milkyWay");
+  const stars = useBodyTexture("stars");
+  const map = milky ?? stars;
+  return (
+    <mesh>
+      <sphereGeometry args={[380, 24, 16]} />
+      <meshBasicMaterial
+        map={map ?? undefined}
+        color={map ? "#ffffff" : "#050816"}
+        side={THREE.BackSide}
+        depthWrite={false}
+        opacity={dim ? 0.55 : 1}
+        transparent={!!dim}
+      />
+    </mesh>
+  );
+}
+
 function mkStars(n: number, r0: number, r1: number) {
   const v: number[] = [];
   for (let i = 0; i < n; i++) {
@@ -994,11 +1108,11 @@ function mkStars(n: number, r0: number, r1: number) {
 }
 function StarField({ dim }: { dim?: boolean }) {
   // Size-attenuated stars look far more realistic — stars scale with camera distance
-  const v1=useMemo(()=>mkStars(2400,92,180),[]);
-  const v2=useMemo(()=>mkStars(600,90,155),[]);
-  const v3=useMemo(()=>mkStars(120,90,145),[]);
-  const v4=useMemo(()=>mkStars(200,108,170),[]);   // blue tint
-  const v5=useMemo(()=>mkStars(60,95,150),[]);     // warm giant stars
+  const v1=useMemo(()=>mkStars(900,92,180),[]);
+  const v2=useMemo(()=>mkStars(280,90,155),[]);
+  const v3=useMemo(()=>mkStars(80,90,145),[]);
+  const v4=useMemo(()=>mkStars(90,108,170),[]);
+  const v5=useMemo(()=>mkStars(28,95,150),[]);
   const o = dim ? 0.35 : 1;
   return (
     <>
@@ -1023,7 +1137,7 @@ function StarField({ dim }: { dim?: boolean }) {
 
 // ── Milky Way Band ────────────────────────────────────────────────────────────
 function MilkyWayBand() {
-  const v=useMemo(()=>{ const a:number[]=[];for(let i=0;i<4000;i++){const ang=Math.random()*Math.PI*2,r=120+Math.random()*60,sp=(Math.random()-0.5)*28*(1-Math.abs(Math.sin(ang))*0.5);a.push(Math.cos(ang)*r,sp,Math.sin(ang)*r);}return new Float32Array(a);},[]);
+  const v=useMemo(()=>{ const a:number[]=[];for(let i=0;i<1600;i++){const ang=Math.random()*Math.PI*2,r=120+Math.random()*60,sp=(Math.random()-0.5)*28*(1-Math.abs(Math.sin(ang))*0.5);a.push(Math.cos(ang)*r,sp,Math.sin(ang)*r);}return new Float32Array(a);},[]);
   return <points rotation={[0.42,0,0.26]}><bufferGeometry><bufferAttribute attach="attributes-position" args={[v,3]}/></bufferGeometry><pointsMaterial size={0.07} color="#b8ccee" transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false}/></points>;
 }
 
@@ -1039,6 +1153,10 @@ function OrbitingPlanet({
   const planetRef = useRef<THREE.Mesh>(null);
   const glowRef   = useRef<THREE.Mesh>(null);
   const vR = Math.max(0.15, planet.visualRadius * (selected ? (labInputs?.radiusScale ?? 1) : 1));
+  const texKey = PLANET_TEXTURE_KEY[planet.id];
+  const map = useBodyTexture(texKey);
+  const venusAtmo = useBodyTexture(planet.id === "venus" ? "venusAtmosphere" : undefined);
+  const moons = MOONS_BY_PLANET[planet.id] ?? [];
 
   useFrame((state, delta) => {
     if (!paused) {
@@ -1068,21 +1186,97 @@ function OrbitingPlanet({
       })()}
       <group position={[planet.orbitRadius,0,0]}>
         <mesh ref={planetRef}>
-          <sphereGeometry args={[vR, 48, 48]} />
-          {/* PBR MeshStandardMaterial — responds to directional sunlight realistically */}
+          <sphereGeometry args={[vR, 32, 32]} />
           <meshStandardMaterial
-            color={planet.color}
+            map={map ?? undefined}
+            color={map ? "#ffffff" : planet.color}
             roughness={planet.id === "earth" ? 0.55 : planet.id === "mercury" ? 0.92 : 0.78}
             metalness={planet.id === "mercury" ? 0.25 : 0.02}
             emissive={selected ? new THREE.Color(planet.color).multiplyScalar(0.12) : new THREE.Color(0, 0, 0)}
             emissiveIntensity={selected ? 1 : 0}
           />
         </mesh>
-        <mesh><sphereGeometry args={[vR*1.12,32,32]}/><meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>
-        {selected&&<mesh ref={glowRef}><sphereGeometry args={[vR*1.28,24,24]}/><meshBasicMaterial color={C.cyan} transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>}
-        {planet.ring&&<mesh rotation={[Math.PI/2.1,0,0]}><ringGeometry args={[vR*1.42,vR*2.2,80]}/><meshBasicMaterial color="#d9c49c" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false}/></mesh>}
-        {planet.moons>0&&planet.id!=="jupiter"&&<mesh position={[vR*2.4,0,0]}><sphereGeometry args={[Math.max(0.06,vR*0.22),16,16]}/><meshPhongMaterial color="#c8d0e0" shininess={5}/></mesh>}
+        {planet.id === "venus" && (
+          <mesh>
+            <sphereGeometry args={[vR * 1.03, 24, 24]} />
+            <meshStandardMaterial map={venusAtmo ?? undefined} color={venusAtmo ? "#ffffff" : "#e0b56e"} transparent opacity={0.55} depthWrite={false} />
+          </mesh>
+        )}
+        <mesh><sphereGeometry args={[vR*1.12,24,24]}/><meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>
+        {selected&&<mesh ref={glowRef}><sphereGeometry args={[vR*1.28,20,20]}/><meshBasicMaterial color={C.cyan} transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>}
+        {planet.ring&&<mesh rotation={[Math.PI/2.1,0,0]}><ringGeometry args={[vR*1.42,vR*2.2,64]}/><meshBasicMaterial color="#d9c49c" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false}/></mesh>}
+        {moons.map(moon => (
+          <OrbitingMoon key={moon.id} moon={moon} planetRadius={vR} paused={paused} speed={speed} screenPos={screenPos} />
+        ))}
       </group>
+    </group>
+  );
+}
+
+function OrbitingMoon({
+  moon, planetRadius, paused, speed, screenPos,
+}: {
+  moon: Moon; planetRadius: number; paused: boolean; speed: number;
+  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
+  const map = useBodyTexture(moon.textureKey);
+  const r = Math.max(0.05, planetRadius * moon.visualRadius);
+  const d = planetRadius * moon.orbitScale;
+
+  useFrame((state, delta) => {
+    if (!paused && groupRef.current) groupRef.current.rotation.y += delta * 0.35 * speed;
+    if (meshRef.current) {
+      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
+      screenPos.current[moon.id] = { x: ((wp.x + 1) / 2) * SW, y: ((-wp.y + 1) / 2) * SH };
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      <mesh ref={meshRef} position={[d, 0, 0]}>
+        <sphereGeometry args={[r, 16, 16]} />
+        <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : moon.color} roughness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+function OrbitingDwarf({
+  dwarf, selected, paused, speed, screenPos,
+}: {
+  dwarf: DwarfPlanet; selected: boolean; paused: boolean; speed: number;
+  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
+}) {
+  const orbitRef = useRef<THREE.Group>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
+  const map = useBodyTexture(dwarf.textureKey);
+
+  useFrame((state, delta) => {
+    if (!paused && orbitRef.current) orbitRef.current.rotation.y += delta * dwarf.orbitSpeed * speed;
+    if (!paused && meshRef.current) meshRef.current.rotation.y += delta * dwarf.rotationSpeed * speed;
+    if (meshRef.current) {
+      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
+      screenPos.current[dwarf.id] = { x: ((wp.x + 1) / 2) * SW, y: ((-wp.y + 1) / 2) * SH };
+    }
+  });
+
+  const pts = useMemo(() => {
+    const curve = new THREE.EllipseCurve(0, 0, dwarf.orbitRadius, dwarf.orbitRadius, 0, Math.PI * 2);
+    return new Float32Array(curve.getPoints(120).flatMap(p => [p.x, 0, p.y]));
+  }, [dwarf.orbitRadius]);
+
+  return (
+    <group ref={orbitRef}>
+      <line>
+        <bufferGeometry><bufferAttribute attach="attributes-position" args={[pts, 3]} /></bufferGeometry>
+        <lineBasicMaterial color={selected ? C.gold : "#1a2840"} transparent opacity={selected ? 0.7 : 0.16} />
+      </line>
+      <mesh ref={meshRef} position={[dwarf.orbitRadius, 0, 0]}>
+        <sphereGeometry args={[dwarf.visualRadius, 24, 24]} />
+        <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : dwarf.color} roughness={0.88} />
+      </mesh>
     </group>
   );
 }
@@ -1090,24 +1284,26 @@ function OrbitingPlanet({
 // ── Asteroid Belt ─────────────────────────────────────────────────────────────
 function AsteroidBelt({ paused, speed }: { paused: boolean; speed: number }) {
   const gRef = useRef<THREE.Group>(null);
-  const asts = useMemo(()=>Array.from({length:110},(_,i)=>{ const a=i*0.395,r=25.5+Math.sin(i*8.1)*2.3; return {pos:[Math.cos(a)*r,Math.sin(i*1.1)*0.2,Math.sin(a)*r] as [number,number,number], scale:0.055+(i%6)*0.018, color:["#7a706a","#8a8078","#6a5e58","#9a8e88"][i%4]}; }),[]);
+  const asts = useMemo(()=>Array.from({length:70},(_,i)=>{ const a=i*0.395,r=25.5+Math.sin(i*8.1)*2.3; return {pos:[Math.cos(a)*r,Math.sin(i*1.1)*0.2,Math.sin(a)*r] as [number,number,number], scale:0.055+(i%6)*0.018, color:["#7a706a","#8a8078","#6a5e58","#9a8e88"][i%4]}; }),[]);
   useFrame((_,delta)=>{ if(!paused&&gRef.current) gRef.current.rotation.y+=delta*0.022*speed; });
   return <group ref={gRef}>{asts.map((a,i)=><mesh key={i} position={a.pos} scale={a.scale}><dodecahedronGeometry args={[1,0]}/><meshStandardMaterial color={a.color} roughness={0.95}/></mesh>)}</group>;
 }
 
 // ─── UNIVERSE PANEL ──────────────────────────────────────────────────────────
-function UniversePanel({ selectedPlanet, onFocus, speed, setSpeed, zoomIn, zoomOut }: {
-  selectedPlanet: Planet; onFocus: (id: string) => void;
+function UniversePanel({ selectedPlanet, selectedMoon, onFocus, onMoon, speed, setSpeed, zoomIn, zoomOut }: {
+  selectedPlanet: Planet; selectedMoon: Moon | null; onFocus: (id: string) => void; onMoon: (id: string) => void;
   speed: number; setSpeed: (v: number) => void; zoomIn: () => void; zoomOut: () => void;
 }) {
   const [factIdx, setFactIdx] = useState(0);
+  const planetMoons = MOONS_BY_PLANET[selectedPlanet.id] ?? [];
+  const facts = selectedMoon ? selectedMoon.funFacts : selectedPlanet.funFacts;
   return (
     <View style={pw.wrap}>
       <LinearGradient colors={selectedPlanet.gradientColors} style={pw.hero}>
-        <Text style={pw.heroEmoji}>{selectedPlanet.emoji}</Text>
+        <Text style={pw.heroEmoji}>{selectedMoon ? selectedMoon.emoji : selectedPlanet.emoji}</Text>
         <View style={{ flex:1 }}>
-          <Text style={pw.heroName}>{selectedPlanet.name}</Text>
-          <Text style={pw.heroNick}>{selectedPlanet.nickname.toUpperCase()}</Text>
+          <Text style={pw.heroName}>{selectedMoon ? selectedMoon.name : selectedPlanet.name}</Text>
+          <Text style={pw.heroNick}>{(selectedMoon ? selectedMoon.nickname : selectedPlanet.nickname).toUpperCase()}</Text>
         </View>
         <View style={{ flexDirection:"row", gap:6 }}>
           <GlassBtn label="+" onPress={zoomIn} small /><GlassBtn label="−" onPress={zoomOut} small />
@@ -1115,14 +1311,34 @@ function UniversePanel({ selectedPlanet, onFocus, speed, setSpeed, zoomIn, zoomO
       </LinearGradient>
 
       <Pressable style={pw.factCard} onPress={() => setFactIdx(i => (i+1)%3)}>
-        <Text style={pw.factQuote}>"{selectedPlanet.funFacts[factIdx]}"</Text>
+        <Text style={pw.factQuote}>"{facts[factIdx]}"</Text>
         <Text style={pw.factTap}>TAP FOR NEXT FACT</Text>
       </Pressable>
 
-      <View style={pw.statsRow}><MiniStat l="Gravity" v={`${selectedPlanet.gravity}g`} accent={C.cyan}/><MiniStat l="Day" v={selectedPlanet.day} accent={C.gold}/><MiniStat l="Moons" v={`${selectedPlanet.moons}`} accent={C.violet}/></View>
-      <View style={pw.statsRow}><MiniStat l="Temp" v={`${selectedPlanet.temperature}°C`} accent={C.red}/><MiniStat l="Year" v={selectedPlanet.year} accent={C.green}/><MiniStat l="Dist" v={`${selectedPlanet.distanceAU} AU`} accent={C.orange}/></View>
+      {selectedMoon ? (
+        <View style={pw.atmo}><Text style={pw.atmoLabel}>ORBITS</Text><Text style={pw.atmoText}>{selectedMoon.fact}</Text></View>
+      ) : (
+        <>
+          <View style={pw.statsRow}><MiniStat l="Gravity" v={`${selectedPlanet.gravity}g`} accent={C.cyan}/><MiniStat l="Day" v={selectedPlanet.day} accent={C.gold}/><MiniStat l="Moons" v={`${selectedPlanet.moons}`} accent={C.violet}/></View>
+          <View style={pw.statsRow}><MiniStat l="Temp" v={`${selectedPlanet.temperature}°C`} accent={C.red}/><MiniStat l="Year" v={selectedPlanet.year} accent={C.green}/><MiniStat l="Dist" v={`${selectedPlanet.distanceAU} AU`} accent={C.orange}/></View>
+          <View style={pw.atmo}><Text style={pw.atmoLabel}>ATMOSPHERE</Text><Text style={pw.atmoText}>{selectedPlanet.atmosphere}</Text></View>
+        </>
+      )}
 
-      <View style={pw.atmo}><Text style={pw.atmoLabel}>ATMOSPHERE</Text><Text style={pw.atmoText}>{selectedPlanet.atmosphere}</Text></View>
+      {planetMoons.length > 0 && (
+        <>
+          <Text style={[pw.atmoLabel, { marginTop: 12 }]}>MAJOR MOONS — TAP TO EXPLORE</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+            <View style={{ flexDirection:"row", gap:7 }}>
+              {planetMoons.map(m => (
+                <Pressable key={m.id} style={[pw.chip, selectedMoon?.id===m.id&&pw.chipActive]} onPress={()=>onMoon(m.id)}>
+                  <Text style={[pw.chipText, selectedMoon?.id===m.id&&{color:C.cyan}]}>{m.emoji} {m.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        </>
+      )}
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop:12 }}>
         <View style={{ flexDirection:"row", gap:7 }}>
@@ -1504,21 +1720,51 @@ const COSMO_QA: Array<{
   { q: "Compare NASA and ISRO", a: "NASA: founded 1958, $24.9B budget, 430 launches, 68 active satellites. ISRO: founded 1969, $1.7B budget, 94 launches. ISRO is arguably the world's most cost-efficient agency — their Mars mission cost less than making the movie Gravity!", section:"agencies" },
 ];
 
-function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency }: {
+function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency, onAction }: {
   onActivateExperiment: (id: string) => void; onSection: (s: Section) => void;
-  onSelectAgency: (id: string) => void;
+  onSelectAgency: (id: string) => void; onAction: (action: CosmoAction) => void;
 }) {
   const [msgs, setMsgs] = useState<CosmoMsg[]>([
-    { from:"cosmo", text:"👋 Hi! I'm Cosmo — your AI guide to humanity's presence in space.\n\nI can show you satellites, navigate to agencies, launch experiments, and answer anything about space. What would you like to explore?" }
+    { from:"cosmo", text:"Hi — I'm Cosmo. Ask in your own words, or tap a suggestion. I use the local catalog plus Groq when the network is up." }
   ]);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(!!process.env.EXPO_PUBLIC_GROQ_API_KEY);
 
-  const ask = (qa: typeof COSMO_QA[number]) => {
-    setMsgs(prev => [...prev, {from:"user",text:qa.q}, {from:"cosmo",text:qa.a}]);
+  const runActions = (qa: typeof COSMO_QA[number]) => {
     setTimeout(() => {
       if (qa.expId) onActivateExperiment(qa.expId);
       else if (qa.agencyId) { onSelectAgency(qa.agencyId); if (qa.section) onSection(qa.section); }
       else if (qa.section) onSection(qa.section);
-    }, 600);
+    }, 400);
+  };
+
+  const ask = (qa: typeof COSMO_QA[number]) => {
+    setMsgs(prev => [...prev, {from:"user",text:qa.q}, {from:"cosmo",text:qa.a}]);
+    runActions(qa);
+  };
+
+  const sendFree = async () => {
+    const q = draft.trim();
+    if (!q || busy) return;
+    setDraft("");
+    setMsgs(prev => [...prev, { from: "user", text: q }]);
+    setBusy(true);
+    try {
+      const history = msgs.slice(-8).map(m => ({
+        role: (m.from === "user" ? "user" : "assistant") as "user" | "assistant",
+        content: m.text,
+      }));
+      const result = await askCosmo(q, history);
+      setOnline(true);
+      setMsgs(prev => [...prev, { from: "cosmo", text: result.text }]);
+      result.actions.forEach(onAction);
+    } catch {
+      setOnline(false);
+      setMsgs(prev => [...prev, { from: "cosmo", text: "I couldn't reach Groq just now. Use a suggestion chip — those work offline from the local catalog." }]);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -1527,14 +1773,8 @@ function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency }: {
         <Text style={co.avatar}>🤖</Text>
         <View>
           <Text style={co.name}>Cosmo</Text>
-          <Text style={co.status}>● Space AI  ·  Knowledge Graph  ·  Offline-ready</Text>
+          <Text style={co.status}>{online ? "Groq + local catalog" : "Offline chips — Groq unreachable"}</Text>
         </View>
-      </View>
-
-      <View style={co.capabilities}>
-        {["🛰 Navigate to any satellite","🏛 Filter by space agency","🧪 Launch experiments","🕒 Explore space history","🌍 Earth Hub guide"].map((c2,i)=>(
-          <View key={i} style={co.capItem}><Text style={co.capText}>{c2}</Text></View>
-        ))}
       </View>
 
       <View style={co.chat}>
@@ -1545,7 +1785,23 @@ function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency }: {
         ))}
       </View>
 
-      <Text style={co.sugLabel}>ASK ME ANYTHING</Text>
+      <View style={co.inputRow}>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Ask Cosmo…"
+          placeholderTextColor={C.textMuted}
+          style={co.input}
+          editable={!busy}
+          returnKeyType="send"
+          onSubmitEditing={sendFree}
+        />
+        <Pressable style={co.sendBtn} onPress={sendFree} disabled={busy}>
+          <Text style={co.sendText}>{busy ? "…" : "Send"}</Text>
+        </Pressable>
+      </View>
+
+      <Text style={co.sugLabel}>SUGGESTIONS (OFFLINE)</Text>
       <View style={co.sugs}>
         {COSMO_QA.map((qa,i)=>(
           <Pressable key={i} style={co.sug} onPress={()=>ask(qa)}>
@@ -1557,9 +1813,11 @@ function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency }: {
   );
 }
 
-// ─── QUIZ PANEL ───────────────────────────────────────────────────────────────
-function QuizPanel() {
-  const qs = useMemo(()=>QUIZ_QUESTIONS.slice(0,10),[]);
+function QuizPanel({ exploredIds }: { exploredIds: string[] }) {
+  const qs = useMemo(() => {
+    const unlocked = QUIZ_QUESTIONS.filter(q => !q.objectId || exploredIds.includes(q.objectId));
+    return unlocked.slice(0, 10);
+  }, [exploredIds]);
   const [qi,setQi]=useState(0);const [sel,setSel]=useState<number|null>(null);
   const [score,setScore]=useState(0);const [streak,setStreak]=useState(0);const [done,setDone]=useState(false);
   const q=qs[qi];
@@ -1567,11 +1825,21 @@ function QuizPanel() {
   const next=()=>{ if(qi>=qs.length-1){setDone(true);return;}setQi(i=>i+1);setSel(null);};
   const restart=()=>{setQi(0);setSel(null);setScore(0);setStreak(0);setDone(false);};
 
-  if(done)return(<View style={qz.done}><Text style={qz.doneEmoji}>🏆</Text><Text style={qz.doneTitle}>Quiz Complete!</Text><Text style={qz.doneScore}>{score}/{qs.length}</Text><Text style={qz.doneSub}>{score>=8?"Space genius! 🌟":score>=5?"Great explorer! 🚀":"Keep exploring! 🌌"}</Text><Pressable style={qz.restartBtn} onPress={restart}><Text style={qz.restartText}>Try Again</Text></Pressable></View>);
+  if (qs.length === 0) {
+    return (
+      <View style={pw.wrap}>
+        <Text style={qz.doneTitle}>Explore first</Text>
+        <Text style={qz.doneSub}>Tap a planet, moon, or satellite in the 3D view to unlock quiz questions about it.</Text>
+      </View>
+    );
+  }
+
+  if(done)return(<View style={qz.done}><Text style={qz.doneEmoji}>🏆</Text><Text style={qz.doneTitle}>Quiz Complete!</Text><Text style={qz.doneScore}>{score}/{qs.length}</Text><Text style={qz.doneSub}>{score>=8?"Space genius!":score>=5?"Great explorer!":"Keep exploring!"}</Text><Pressable style={qz.restartBtn} onPress={restart}><Text style={qz.restartText}>Try Again</Text></Pressable></View>);
   if(!q)return null;
 
   return (
     <View style={pw.wrap}>
+      <Text style={co.status}>Unlocked by exploring {exploredIds.length} object{exploredIds.length===1?"":"s"}</Text>
       <View style={qz.bar}><View style={qz.prog}><View style={[qz.progFill,{width:`${(qi/qs.length)*100}%`}]}/></View><Text style={qz.scoreText}>⭐{score} 🔥×{streak}</Text></View>
       <Text style={qz.qNum}>Question {qi+1} of {qs.length}</Text>
       <View style={qz.qCard}><Text style={qz.qEmoji}>{q.emoji}</Text><Text style={qz.qText}>{q.question}</Text></View>
@@ -1583,7 +1851,7 @@ function QuizPanel() {
           </Pressable>);
         })}
       </View>
-      {sel!==null&&(<View style={qz.expl}><Text style={qz.explTitle}>{sel===q.correctIndex?"✅ Correct!":"❌ Not quite"}</Text><Text style={qz.explText}>{q.explanation}</Text><Pressable style={qz.nextBtn} onPress={next}><Text style={qz.nextText}>{qi>=qs.length-1?"See Results":"Next →"}</Text></Pressable></View>)}
+      {sel!==null&&(<View style={qz.expl}><Text style={qz.explTitle}>{sel===q.correctIndex?"Correct":"Not quite"}</Text><Text style={qz.explText}>{q.explanation}</Text><Pressable style={qz.nextBtn} onPress={next}><Text style={qz.nextText}>{qi>=qs.length-1?"See Results":"Next →"}</Text></Pressable></View>)}
     </View>
   );
 }
@@ -1866,6 +2134,10 @@ const co = StyleSheet.create({
   sugs: { gap:6 },
   sug: { borderRadius:10,padding:11,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
   sugQ: { color:C.textSub,fontSize:12 },
+  inputRow: { flexDirection:"row", gap:8, marginBottom:12, alignItems:"center" },
+  input: { flex:1, height:42, borderRadius:12, paddingHorizontal:12, color:C.text, backgroundColor:"rgba(255,255,255,0.06)", borderWidth:1, borderColor:C.border, fontSize:13 },
+  sendBtn: { height:42, paddingHorizontal:14, borderRadius:12, alignItems:"center", justifyContent:"center", backgroundColor:"rgba(77,249,255,0.15)", borderWidth:1, borderColor:"rgba(77,249,255,0.4)" },
+  sendText: { color:C.cyan, fontSize:12, fontWeight:"900" },
 });
 
 const qz = StyleSheet.create({

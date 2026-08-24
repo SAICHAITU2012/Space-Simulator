@@ -62,5 +62,11 @@ This is not the final phone demo path, but it verifies the React Native UI, Thre
 - Expo provides the mobile development loop, QR launch, fast refresh, and native module packaging.
 - `expo-gl` provides the native OpenGL/WebGL render target.
 - `@react-three/fiber/native` is the main 3D React renderer over Three.js.
-- Core planet data and physics equations are bundled locally.
-- The AI Space Buddy is a placeholder layer by design; the simulation works offline first.
+- Core planet data and physics equations are bundled locally and run on-device.
+- Planet/Moon maps in `assets/` are from [Solar System Scope](https://www.solarsystemscope.com/textures/) (CC BY 4.0).
+- Cosmo (AI Space Buddy) uses Groq (`EXPO_PUBLIC_GROQ_API_KEY` in `.env`) with the local catalog as context. Suggestion chips work offline.
+- Tap **i** in the top bar for in-app credits.
+
+## Attribution
+
+Solar System Scope textures — CC BY 4.0. Mission and satellite facts compiled from NASA, ESA, and ISRO public materials.
