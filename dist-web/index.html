@@ -6,6 +6,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <title>SpaceVerse</title>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="sv-space-bg">
+      /* SpaceVerse — deep-space background: applied before JS loads to prevent white flash.
+         This is the single authoritative source for the HTML/CSS background layer.
+         The WebGL renderer is separately configured with setClearColor(0x01020a, 1)
+         to ensure the 3D canvas also clears to this exact colour. */
+      html, body {
+        background: #01020a !important;
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      #root {
+        background: #01020a !important;
+        height: 100%;
+        display: flex;
+        flex: 1;
+      }
+      canvas {
+        background: #01020a !important;
+        display: block !important;
+      }
+    </style>
     <style id="expo-reset">
       /* These styles make the body full-height */
       html,
@@ -32,6 +55,6 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/_expo/static/js/web/AppEntry-a31edc037d059e2c44b4165256279a2e.js" defer></script>
+  <script src="/_expo/static/js/web/AppEntry-5be8ddafcc180cea06bbd98dc2ef2e15.js" defer></script>
 </body>
 </html>

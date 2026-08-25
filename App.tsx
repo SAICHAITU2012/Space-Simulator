@@ -124,21 +124,24 @@ export default function App() {
   const [speed,             setSpeed]             = useState(1);
   const [motionEnabled,     setMotionEnabled]     = useState(false);
 
-  // Inject black background on web so the canvas looks like real space
-  useEffect(() => {
-    if (Platform.OS === "web") {
-      document.body.style.background = "#000010";
-      document.documentElement.style.background = "#000010";
-      // Also style the canvas and root element
-      const style = document.createElement("style");
-      style.textContent = `
-        body, html, #root { background: #000010 !important; }
-        canvas { background: #000010 !important; display: block; }
-        * { box-sizing: border-box; }
-      `;
-      document.head.appendChild(style);
+  // ── Web background: inject CSS synchronously into <head> to prevent white flash.
+  // This runs on every render but is idempotent (checks for existing style tag).
+  if (Platform.OS === "web" && typeof document !== "undefined") {
+    if (!document.getElementById("sv-space-bg")) {
+      const s = document.createElement("style");
+      s.id = "sv-space-bg";
+      // The critical rule: make the canvas element itself have a dark background.
+      // This covers the transparent WebGL context (alpha:true) that expo-gl creates
+      // on web — the gl props alpha:false is silently ignored by R3F native's shim.
+      s.textContent = [
+        "html,body,#root{background:#01020a!important;margin:0;padding:0;height:100%;overflow:hidden}",
+        "canvas{background:#01020a!important;display:block!important}",
+        "div[data-testid='r3f-canvas']{background:#01020a!important}",
+      ].join("");
+      // Insert as FIRST child of <head> for highest priority
+      document.head.insertBefore(s, document.head.firstChild);
     }
-  }, []);
+  }
   const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | null>(null);
   const [selectedMoonId,    setSelectedMoonId]    = useState<string | null>(null);
   const [selectedDwarfId,   setSelectedDwarfId]   = useState<string | null>(null);
@@ -406,21 +409,55 @@ export default function App() {
       <StatusBar barStyle="light-content" />
 
       {/* ── Full-screen 3D Canvas ── */}
-      <View ref={canvasContainerRef} style={StyleSheet.absoluteFillObject} {...canvasPan.panHandlers}>
+      <View ref={canvasContainerRef} style={[StyleSheet.absoluteFillObject, { backgroundColor: C.bg }]} {...canvasPan.panHandlers}>
         <Canvas
           camera={{ position: [0, 18, 38], fov: 50, near: 0.01, far: 2000 }}
           gl={{
             antialias: true,
             logarithmicDepthBuffer: true,
             powerPreference: "high-performance",
+            // NOTE: alpha:false is silently ignored by @react-three/fiber/native's
+            // expo-gl shim on web — the shim only forwards `antialias` from gl props.
+            // The actual fix is setClearColor with alpha=1 in onCreated below.
             alpha: false,
           }}
-          onCreated={({ gl }) => {
+          onCreated={({ gl, scene }) => {
+            // ── THE DEFINITIVE BACKGROUND FIX ──────────────────────────────
+            // expo-gl on web creates a WebGL context with alpha:true regardless
+            // of what alpha:false is passed in gl props (R3F native shim ignores it).
+            // This causes the canvas to be transparent, showing the grey RN View.
+            //
+            // Fix: force the renderer to always clear with our deep-space colour
+            // at full opacity (alpha=1), overriding the transparent buffer.
+            const SPACE_COLOR = 0x01020a;
+            gl.setClearColor(SPACE_COLOR, 1);      // opaque deep-space blue-black
+            gl.autoClear = true;                    // ensure clear happens every frame
+            gl.autoClearColor = true;               // clear colour buffer every frame
+            gl.autoClearDepth = true;               // clear depth buffer every frame
+
+            // Also set scene.background so R3F doesn't override our clear color.
+            // Using THREE.Color ensures it's treated as the scene background.
+            scene.background = new THREE.Color(SPACE_COLOR);
+
+            // Tone mapping for realistic planet/sun rendering
             gl.toneMapping = THREE.ACESFilmicToneMapping;
             gl.toneMappingExposure = 0.72;
+
+            // Debug log (remove after verification)
+            if (process.env.NODE_ENV !== "production") {
+              const cc = new THREE.Color();
+              gl.getClearColor(cc);
+              console.log(`[SpaceVerse] Renderer initialized:`, {
+                clearColor: cc.getHexString(),
+                clearAlpha: gl.getClearAlpha(),
+                toneMapping: gl.toneMapping,
+              });
+            }
           }}
         >
-          <color attach="background" args={["#00000f"]} />
+          {/* scene.background is also set declaratively here as a safety net.
+              The authoritative value is set imperatively in onCreated above. */}
+          <color attach="background" args={["#01020a"]} />
           <Suspense fallback={null}>
             {showEarthHub ? (
               <EarthHubScene
