@@ -6,7 +6,7 @@
     "runtimeVersion": {
       "policy": "sdkVersion"
     },
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "dark",
     "scheme": "spaceverse",
     "assetBundlePatterns": [
@@ -25,4 +25,3 @@
     }
   }
 }
-

@@ -4,6 +4,8 @@ SpaceVerse is a phone-first astronomy learning prototype built with React Native
 
 ## Start Development
 
+Use Node 22 for Expo. Node 26 can cause the Expo dev server to stall before the QR code appears.
+
 1. Install dependencies:
 
    ```sh
@@ -14,6 +16,12 @@ SpaceVerse is a phone-first astronomy learning prototype built with React Native
 
    ```sh
    npm run start:lan
+   ```
+
+   On this Mac, the explicit Node 22 command is:
+
+   ```sh
+   npm run start:lan:node22
    ```
 
 3. Scan the QR code with Expo Go on the iQOO phone.

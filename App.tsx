@@ -109,6 +109,41 @@ const C = {
 
 const PANEL_PEEK = 88;
 
+function SpaceBackdrop() {
+  const dots = useMemo(() =>
+    Array.from({ length: 130 }, (_, i) => ({
+      left: `${(i * 37 + 11) % 100}%` as `${number}%`,
+      top: `${(i * 59 + 17) % 100}%` as `${number}%`,
+      size: 1 + (i % 4) * 0.55,
+      opacity: 0.22 + (i % 6) * 0.09,
+      color: ["#ffffff", "#c9dcff", "#fff1d6", "#8be8ff"][i % 4],
+    })),
+    []
+  );
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "#01020a" }]} />
+      {dots.map((dot, i) => (
+        <View
+          key={i}
+          style={{
+            position: "absolute",
+            left: dot.left,
+            top: dot.top,
+            width: dot.size,
+            height: dot.size,
+            borderRadius: dot.size / 2,
+            opacity: dot.opacity,
+            backgroundColor: dot.color,
+          }}
+        />
+      ))}
+      <View style={ui.backdropBand} />
+    </View>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { width: viewW, height: viewH } = useWindowDimensions();
@@ -223,11 +258,16 @@ export default function App() {
 
   // Touch handling
   const touchSnap = useRef({ yaw: 0, pitch: 0, zoom: 38, dist: 0, tapX: 0, tapY: 0, t: 0 });
+  const isSceneTouch = useCallback((ev: { nativeEvent: { touches?: Array<{ pageY: number }>; pageY?: number } }) => {
+    const y = ev.nativeEvent.touches?.[0]?.pageY ?? ev.nativeEvent.pageY ?? 0;
+    const sheetHeight = panelIsOpen.current ? panelOpen : panelPeek;
+    return y < viewH - sheetHeight - 6;
+  }, [panelOpen, panelPeek, viewH]);
 
   const canvasPan = useMemo(() =>
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: isSceneTouch,
+      onMoveShouldSetPanResponder: isSceneTouch,
       onPanResponderGrant: (ev) => {
         const touches = ev.nativeEvent.touches;
         const t0 = touches[0];
@@ -262,7 +302,7 @@ export default function App() {
         }
       },
     }),
-    []
+    [isSceneTouch]
   );
 
   // Panel pan
@@ -407,6 +447,7 @@ export default function App() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" />
+      <SpaceBackdrop />
 
       {/* ── Full-screen 3D Canvas ── */}
       <View ref={canvasContainerRef} style={[StyleSheet.absoluteFillObject, { backgroundColor: C.bg }]} {...canvasPan.panHandlers}>
@@ -1277,11 +1318,11 @@ function StarSky({ dim }: { dim?: boolean }) {
       <sphereGeometry args={[380, 24, 16]} />
       <meshBasicMaterial
         map={map ?? undefined}
-        color={map ? "#ffffff" : "#050816"}
+        color={map ? "#202848" : "#050816"}
         side={THREE.BackSide}
         depthWrite={false}
-        opacity={dim ? 0.55 : 1}
-        transparent={!!dim}
+        opacity={dim ? 0.28 : 0.42}
+        transparent
       />
     </mesh>
   );
@@ -2681,6 +2722,16 @@ function td(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: numb
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const ui = StyleSheet.create({
+  backdropBand: {
+    position:"absolute",
+    left:"-20%",
+    right:"-20%",
+    top:"28%",
+    height:120,
+    opacity:0.26,
+    backgroundColor:"rgba(77,249,255,0.10)",
+    transform:[{ rotate:"-18deg" }],
+  },
   topBar: { flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingHorizontal:18,paddingTop:10,paddingBottom:8,backgroundColor:"rgba(1,2,10,0.82)",borderBottomWidth:1,borderBottomColor:"rgba(77,249,255,0.07)" },
   topRight: { flexDirection:"row",gap:8 },
   appName: { color:"#eef5ff",fontSize:15,fontWeight:"900",letterSpacing:2 },
