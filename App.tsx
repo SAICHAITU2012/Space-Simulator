@@ -108,6 +108,26 @@ const C = {
 };
 
 const PANEL_PEEK = 88;
+const WEB_VERTICAL_SCROLL = Platform.select({
+  web: {
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
+    touchAction: "pan-y",
+  } as any,
+  default: {},
+});
+const WEB_HORIZONTAL_SCROLL = Platform.select({
+  web: {
+    overflowX: "auto",
+    overflowY: "hidden",
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
+    touchAction: "pan-x",
+  } as any,
+  default: {},
+});
 
 function SpaceBackdrop() {
   const dots = useMemo(() =>
@@ -731,7 +751,7 @@ export default function App() {
 
           {/* Content */}
           <ScrollView
-            style={ui.sheetContent}
+            style={[ui.sheetContent, WEB_VERTICAL_SCROLL]}
             contentContainerStyle={ui.sheetScrollContent}
             scrollEnabled
             showsVerticalScrollIndicator={false}
@@ -814,7 +834,7 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
 
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView
-          style={hs.scrollView}
+          style={[hs.scrollView, WEB_VERTICAL_SCROLL]}
           contentContainerStyle={hs.scroll}
           scrollEnabled
           showsVerticalScrollIndicator={false}
@@ -830,7 +850,7 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
           </Text>
 
           {/* Agency flags row */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} directionalLockEnabled style={{ marginBottom: 24 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} directionalLockEnabled style={[{ marginBottom: 24 }, WEB_HORIZONTAL_SCROLL]}>
             <View style={{ flexDirection:"row", gap:8, alignItems:"center" }}>
               {AGENCIES.map(a => (
                 <Pressable key={a.id} style={hs.agencyFlag} onPress={() => onSection("agencies")}>
@@ -1825,7 +1845,7 @@ function EarthHubPanel({
 
       {/* Agency filter chips */}
       <Text style={pw.atmoLabel}>FILTER BY AGENCY</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:10 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} directionalLockEnabled style={[{ marginBottom:10 }, WEB_HORIZONTAL_SCROLL]}>
         <View style={{ flexDirection:"row", gap:7 }}>
           <Pressable style={[pw.chip, !selectedAgencyId && pw.chipActive]} onPress={() => onSelectAgency("")}>
             <Text style={[pw.chipText, !selectedAgencyId && {color:C.cyan}]}>🌍 All</Text>
@@ -1840,7 +1860,7 @@ function EarthHubPanel({
 
       {/* Orbit class filter */}
       <Text style={pw.atmoLabel}>FILTER BY ORBIT</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} directionalLockEnabled style={[{ marginBottom:12 }, WEB_HORIZONTAL_SCROLL]}>
         <View style={{ flexDirection:"row", gap:7 }}>
           {(["All", ...orbitClasses] as Array<"All" | Satellite["orbitClass"]>).map(oc=>(
             <Pressable key={oc} style={[pw.chip, orbitFilter===oc&&pw.chipActive]} onPress={()=>setOrbitFilter(oc)}>
