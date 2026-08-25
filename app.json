@@ -10,7 +10,8 @@
     "userInterfaceStyle": "dark",
     "scheme": "spaceverse",
     "assetBundlePatterns": [
-      "**/*"
+      "assets/*.xjpg",
+      "assets/*.xpng"
     ],
     "ios": {
       "supportsTablet": true

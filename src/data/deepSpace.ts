@@ -1,3 +1,5 @@
+import type { TextureKey } from "../lib/textures";
+
 export type DeepSpaceObject = {
   id: string;
   name: string;
@@ -5,6 +7,8 @@ export type DeepSpaceObject = {
   emoji: string;
   color: string;
   position: [number, number, number];
+  /** Compact position on the Galaxy spiral (scene units). */
+  galaxyViewPosition?: [number, number, number];
   visualRadius: number;
   distance: string;
   discovered: string;
@@ -12,6 +16,7 @@ export type DeepSpaceObject = {
   whyItMatters: string;
   facts: [string, string, string];
   links: Array<{ label: string; url: string }>;
+  textureKey?: TextureKey;
 };
 
 export const DEEP_SPACE_OBJECTS: DeepSpaceObject[] = [
@@ -111,6 +116,8 @@ export const DEEP_SPACE_OBJECTS: DeepSpaceObject[] = [
     color: "#ffe2a8",
     position: [190, 44, -260],
     visualRadius: 7.2,
+    galaxyViewPosition: [2.35, 0.45, -1.7],
+    textureKey: "andromeda",
     distance: "About 2.5 million light-years",
     discovered: "Known since ancient times; identified as a galaxy by Edwin Hubble",
     description: "The nearest large spiral galaxy to the Milky Way and our galaxy's future merger partner.",
@@ -133,6 +140,8 @@ export const DEEP_SPACE_OBJECTS: DeepSpaceObject[] = [
     color: "#9ed8ff",
     position: [-220, 58, -285],
     visualRadius: 5.8,
+    galaxyViewPosition: [-2.45, 0.5, 1.85],
+    textureKey: "whirlpool",
     distance: "About 31 million light-years",
     discovered: "Discovered by Charles Messier in 1773",
     description: "A beautiful spiral galaxy interacting with a smaller companion galaxy.",

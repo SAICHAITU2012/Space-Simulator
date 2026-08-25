@@ -286,6 +286,7 @@ export const PLANETS: Planet[] = [
     year: "84 years",
     temperature: -195,
     atmosphere: "Hydrogen 83%, Helium 15%, Methane 2%",
+    ring: true,
     fact: "Uranus rolls around the Sun on its side — probably tipped over by a massive collision long ago.",
     funFacts: [
       "Uranus has rings too — they're just much darker and harder to see than Saturn's.",

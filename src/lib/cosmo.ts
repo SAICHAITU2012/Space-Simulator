@@ -4,9 +4,12 @@ import { DWARF_PLANETS } from "../data/dwarfs";
 import { SATELLITES } from "../data/satellites";
 import { AGENCIES } from "../data/agencies";
 import { EXPERIMENTS } from "../data/experiments";
+import { STAR_SYSTEMS } from "../data/starSystems";
+import { HALLEY } from "../data/orbitals";
 
 export type CosmoSection =
   | "universe"
+  | "galaxy"
   | "earthhub"
   | "agencies"
   | "missions"
@@ -22,7 +25,9 @@ export type CosmoAction =
   | { type: "focusDwarf"; id: string }
   | { type: "focusSatellite"; id: string }
   | { type: "filterAgency"; id: string }
-  | { type: "startExperiment"; id: string };
+  | { type: "startExperiment"; id: string }
+  | { type: "focusStarSystem"; id: string }
+  | { type: "focusComet"; id: string };
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -31,10 +36,12 @@ const GROQ_MODEL = "llama-3.1-8b-instant";
 
 function knowledgeDigest() {
   return JSON.stringify({
-    sections: ["universe", "earthhub", "agencies", "missions", "timeline", "lab", "cosmo", "quiz"],
+    sections: ["universe", "galaxy", "earthhub", "agencies", "missions", "timeline", "lab", "cosmo", "quiz"],
     planets: PLANETS.map(p => ({ id: p.id, name: p.name, fact: p.fact })),
     moons: MOONS.map(m => ({ id: m.id, name: m.name, planetId: m.planetId, fact: m.fact })),
     dwarfs: DWARF_PLANETS.map(d => ({ id: d.id, name: d.name, fact: d.fact })),
+    stars: STAR_SYSTEMS.map(s => ({ id: s.id, name: s.name, fact: s.fact })),
+    comets: [{ id: HALLEY.id, name: HALLEY.name }],
     satellites: SATELLITES.map(s => ({
       id: s.id, name: s.name, agencyId: s.agencyId, orbitClass: s.orbitClass, headline: s.headline,
     })),
@@ -52,7 +59,7 @@ const TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          section: { type: "string", enum: ["universe", "earthhub", "agencies", "missions", "timeline", "lab", "quiz"] },
+          section: { type: "string", enum: ["universe", "galaxy", "earthhub", "agencies", "missions", "timeline", "lab", "quiz"] },
         },
         required: ["section"],
       },
@@ -86,7 +93,31 @@ const TOOLS = [
     type: "function",
     function: {
       name: "focusDwarf",
-      description: "Focus a dwarf planet",
+      description: "Focus a dwarf planet including Pluto",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "focusStarSystem",
+      description: "Warp the Galaxy view to a star system id such as sirius, betelgeuse, sagittarius",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "focusComet",
+      description: "Focus Halley's comet in Universe view (id: halley)",
       parameters: {
         type: "object",
         properties: { id: { type: "string" } },
@@ -148,6 +179,8 @@ function actionFromTool(name: string, args: Record<string, string>): CosmoAction
   if (name === "focusSatellite" && args.id) return { type: "focusSatellite", id: args.id };
   if (name === "filterAgency" && args.id) return { type: "filterAgency", id: args.id };
   if (name === "startExperiment" && args.id) return { type: "startExperiment", id: args.id };
+  if (name === "focusStarSystem" && args.id) return { type: "focusStarSystem", id: args.id };
+  if (name === "focusComet" && args.id) return { type: "focusComet", id: args.id };
   return null;
 }
 

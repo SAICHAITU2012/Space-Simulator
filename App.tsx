@@ -37,31 +37,41 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { Canvas, useFrame, useThree } from "@react-three/fiber/native";
+import { Canvas } from "@react-three/fiber/native";
 import { Gyroscope } from "expo-sensors";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import * as THREE from "three";
 
 import { PLANETS, Planet, PLANET_BY_ID } from "./src/data/spaceData";
+import { layersForPlanet } from "./src/data/planetLayers";
 import { LabInputs, calculateLabOutcome } from "./src/lib/physics";
 import { MISSIONS } from "./src/data/missions";
 import { QUIZ_QUESTIONS } from "./src/data/quiz";
 import { EXPERIMENTS } from "./src/data/experiments";
 import { AGENCIES, AGENCY_BY_ID } from "./src/data/agencies";
 import {
-  SATELLITES, Satellite, SATELLITE_BY_ID, SATELLITES_BY_AGENCY, satVisualRadius, satsForEarthHub,
+  SATELLITES, Satellite, SATELLITE_BY_ID, SATELLITES_BY_AGENCY,
 } from "./src/data/satellites";
 import { TIMELINE } from "./src/data/timeline";
 import { MOONS, MOON_BY_ID, MOONS_BY_PLANET, Moon } from "./src/data/moons";
 import { DWARF_PLANETS, DWARF_BY_ID, DwarfPlanet } from "./src/data/dwarfs";
 import { DEEP_SPACE_OBJECTS, DEEP_SPACE_BY_ID, DeepSpaceObject } from "./src/data/deepSpace";
-import { PLANET_TEXTURE_KEY, TEXTURE_CREDIT, useBodyTexture } from "./src/lib/textures";
+import { STAR_SYSTEMS, STAR_SYSTEM_BY_ID } from "./src/data/starSystems";
+import { CONSTELLATIONS } from "./src/data/constellations";
+import { HALLEY } from "./src/data/orbitals";
+import { TEXTURE_CREDIT, countCachedTextures } from "./src/lib/textures";
 import { askCosmo, CosmoAction } from "./src/lib/cosmo";
+import { formatSimDate, DEFAULT_SIM_CLOCK } from "./src/lib/simClock";
+import { SolarScene } from "./src/scene/SolarScene";
+import { EarthHubScene } from "./src/scene/EarthHubScene";
+import { GalaxyScene } from "./src/scene/GalaxyScene";
+import { screenW, setViewport } from "./src/scene/viewport";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Section =
   | "universe"
+  | "galaxy"
   | "earthhub"
   | "agencies"
   | "missions"
@@ -72,6 +82,7 @@ type Section =
 
 const SECTIONS: Array<{ id: Section; label: string; emoji: string }> = [
   { id: "universe",  label: "Universe",  emoji: "🌌" },
+  { id: "galaxy",    label: "Galaxy",    emoji: "🌀" },
   { id: "earthhub",  label: "Earth Hub", emoji: "🌍" },
   { id: "agencies",  label: "Agencies",  emoji: "🏛" },
   { id: "missions",  label: "Missions",  emoji: "🚀" },
@@ -84,8 +95,7 @@ const SECTIONS: Array<{ id: Section; label: string; emoji: string }> = [
 const initialWindow = Dimensions.get("window");
 const SW = initialWindow.width;
 const SH = initialWindow.height;
-let screenW = initialWindow.width;
-let screenH = initialWindow.height;
+setViewport(initialWindow.width, initialWindow.height);
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -197,11 +207,17 @@ export default function App() {
       document.head.insertBefore(s, document.head.firstChild);
     }
   }
-  const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | null>(null);
+  const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | "comet" | null>(null);
   const [selectedMoonId,    setSelectedMoonId]    = useState<string | null>(null);
   const [selectedDwarfId,   setSelectedDwarfId]   = useState<string | null>(null);
   const [selectedDeepId,    setSelectedDeepId]    = useState<string | null>(null);
   const [zoomLevel,         setZoomLevel]         = useState(38);
+  const [trueScale,         setTrueScale]         = useState(false);
+  const [loadProgress,      setLoadProgress]      = useState(12);
+  const [selectedStarId,    setSelectedStarId]    = useState<string | null>(null);
+  const [simDateLabel,      setSimDateLabel]      = useState("2000-01-01");
+  const simDaysRef = useRef(0);
+  const prevSectionRef = useRef<Section>("universe");
   const [exploredIds,       setExploredIds]       = useState<string[]>(["earth"]);
   const [showCredits,       setShowCredits]       = useState(false);
   const [activeExperimentId,setActiveExperimentId]= useState<string | null>(null);
@@ -240,10 +256,26 @@ export default function App() {
   );
 
   useEffect(() => {
-    screenW = viewW;
-    screenH = viewH;
+    setViewport(viewW, viewH);
     panelAnim.setValue(panelIsOpen.current ? panelOpen : panelPeek);
   }, [viewW, viewH, panelOpen, panelPeek, panelAnim]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSimDateLabel(formatSimDate(simDaysRef.current));
+      setLoadProgress(p => Math.min(100, Math.max(p, 18 + countCachedTextures() * 8)));
+    }, 400);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    planetScreenPos.current = {};
+    if (section === "galaxy" && prevSectionRef.current !== "galaxy") {
+      camRef.current = { yaw: 0.55, pitch: 0.62, zoom: 11 };
+      setZoomLevel(11);
+    }
+    prevSectionRef.current = section;
+  }, [section]);
 
   // Gyroscope — only available on native (iOS/Android) or mobile web
   useEffect(() => {
@@ -302,8 +334,13 @@ export default function App() {
         const touches = ev.nativeEvent.touches;
         if (touches.length >= 2) {
           const d = td(touches[0], touches[1]);
+          if (touchSnap.current.dist < 12) {
+            touchSnap.current.dist = Math.max(d, 12);
+            touchSnap.current.zoom = camRef.current.zoom;
+            return;
+          }
           const nextZoom = THREE.MathUtils.clamp(
-            touchSnap.current.zoom + (touchSnap.current.dist - d) * 0.075, 8, 180
+            touchSnap.current.zoom * (touchSnap.current.dist / d), 8, 180
           );
           camRef.current.zoom = nextZoom;
           setZoomLevel(nextZoom);
@@ -385,14 +422,20 @@ export default function App() {
   const onMoonTapped = useCallback((id: string) => {
     const m = MOON_BY_ID[id]; if (!m) return;
     setSelectedMoonId(id);
-    setSelectedPlanetId(m.planetId);
-    setSelectedDwarfId(null);
+    if (PLANET_BY_ID[m.planetId]) {
+      setSelectedPlanetId(m.planetId);
+      setSelectedDwarfId(null);
+    } else if (DWARF_BY_ID[m.planetId]) {
+      setSelectedDwarfId(m.planetId);
+    }
     setSelectedDeepId(null);
     setFloatingCard("moon");
     markExplored(id);
     markExplored(m.planetId);
     const p = PLANET_BY_ID[m.planetId];
+    const d = DWARF_BY_ID[m.planetId];
     if (p) setCameraZoom(THREE.MathUtils.clamp(p.orbitRadius * 1.15 + 6, 12, 58));
+    else if (d) setCameraZoom(THREE.MathUtils.clamp(d.orbitRadius * 1.15 + 6, 16, 80));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   }, [markExplored]);
 
@@ -414,17 +457,45 @@ export default function App() {
     setSelectedDwarfId(null);
     setFloatingCard(null);
     markExplored(id);
-    setCameraZoom(150);
+    if (section !== "galaxy") setCameraZoom(150);
     snapPanel(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-  }, [markExplored]);
+  }, [markExplored, section]);
 
   const onSolarTapped = useCallback((id: string) => {
     if (PLANET_BY_ID[id]) onPlanetTapped(id);
     else if (MOON_BY_ID[id]) onMoonTapped(id);
     else if (DWARF_BY_ID[id]) onDwarfTapped(id);
     else if (DEEP_SPACE_BY_ID[id]) onDeepTapped(id);
-  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onDeepTapped]);
+    else if (id === HALLEY.id) {
+      setFloatingCard("comet");
+      markExplored(id);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    }
+  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onDeepTapped, markExplored]);
+
+  const onStarTapped = useCallback((id: string) => {
+    const s = STAR_SYSTEM_BY_ID[id];
+    if (!s) return;
+    setSelectedStarId(id);
+    markExplored(id);
+    if (id === "sun") {
+      setSection("universe");
+      camRef.current = { yaw: 0.18, pitch: 0.36, zoom: 38 };
+      setZoomLevel(38);
+    } else {
+      setCameraZoom(s.warpZoom);
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }, [markExplored]);
+
+  const onGalaxySceneTapped = useCallback((id: string) => {
+    if (STAR_SYSTEM_BY_ID[id]) {
+      onStarTapped(id);
+      return;
+    }
+    if (DEEP_SPACE_BY_ID[id]) onDeepTapped(id);
+  }, [onStarTapped, onDeepTapped]);
 
   const onSatTapped = useCallback((id: string) => {
     if (!SATELLITE_BY_ID[id]) return;
@@ -456,13 +527,17 @@ export default function App() {
     if (action.type === "focusSatellite") { onSatTapped(action.id); switchToSection("earthhub"); }
     if (action.type === "filterAgency") { setSelectedAgencyId(action.id); switchToSection("earthhub"); }
     if (action.type === "startExperiment") activateExperiment(action.id);
-  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onSatTapped, activateExperiment]);
+    if (action.type === "focusStarSystem") { onStarTapped(action.id); switchToSection(action.id === "sun" ? "universe" : "galaxy"); }
+    if (action.type === "focusComet") { setFloatingCard("comet"); switchToSection("universe"); }
+  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onSatTapped, activateExperiment, onStarTapped]);
 
   if (!entered) {
     return <HomeScreen onEnter={() => setEntered(true)} onSection={s => { setSection(s as Section); setEntered(true); }} />;
   }
 
   const showEarthHub = section === "earthhub";
+  const showGalaxy = section === "galaxy";
+  const selectedStar = selectedStarId ? STAR_SYSTEM_BY_ID[selectedStarId] : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -472,7 +547,7 @@ export default function App() {
       {/* ── Full-screen 3D Canvas ── */}
       <View ref={canvasContainerRef} style={[StyleSheet.absoluteFillObject, { backgroundColor: C.bg }]} {...canvasPan.panHandlers}>
         <Canvas
-          camera={{ position: [0, 18, 38], fov: 50, near: 0.01, far: 2000 }}
+          camera={{ position: [0, 18, 38], fov: 50, near: 0.01, far: 4000 }}
           gl={{
             antialias: true,
             logarithmicDepthBuffer: true,
@@ -531,9 +606,21 @@ export default function App() {
                 agencyFilter={agencyFilter}
                 selectedSatId={selectedSatId}
               />
+            ) : showGalaxy ? (
+              <GalaxyScene
+                camRef={camRef}
+                camTarget={camTarget}
+                motionRef={motionRef}
+                isInteracting={isInteracting}
+                pendingTap={pendingTap}
+                screenPos={planetScreenPos}
+                onWarp={onGalaxySceneTapped}
+                selectedId={selectedStarId}
+                onReady={() => setLoadProgress(100)}
+              />
             ) : (
               <SolarScene
-                selectedId={selectedPlanetId}
+                selectedId={selectedDwarfId ?? selectedPlanetId}
                 paused={paused}
                 speed={speed}
                 camRef={camRef}
@@ -545,11 +632,24 @@ export default function App() {
                 labInputs={labInputs}
                 onPlanetTapped={onSolarTapped}
                 zoomLevel={zoomLevel}
+                simDaysRef={simDaysRef}
+                daysPerSecond={DEFAULT_SIM_CLOCK.daysPerSecond}
+                trueScale={trueScale}
+                showCutaway={section === "lab" || floatingCard === "planet"}
               />
             )}
           </Suspense>
         </Canvas>
       </View>
+
+      {loadProgress < 100 && (
+        <View pointerEvents="none" style={{ position: "absolute", left: 16, right: 16, bottom: 110, alignItems: "center" }}>
+          <Text style={{ color: C.textSub, fontSize: 11, letterSpacing: 1.4, marginBottom: 6 }}>STAGED LOAD  {Math.round(loadProgress)}%</Text>
+          <View style={{ height: 4, width: "70%", backgroundColor: "rgba(77,249,255,0.15)", borderRadius: 4, overflow: "hidden" }}>
+            <View style={{ height: 4, width: `${Math.round(loadProgress)}%`, backgroundColor: C.cyan }} />
+          </View>
+        </View>
+      )}
 
       {/* ── UI Overlay ── */}
       <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
@@ -560,10 +660,14 @@ export default function App() {
               <Text style={ui.appSub}>Living Knowledge Graph of Humanity in Space</Text>
             </View>
             <View style={ui.topRight}>
-              {!showEarthHub && <GlassBtn label={paused ? "▶" : "⏸"} onPress={() => setPaused(v => !v)} />}
+              {!showEarthHub && !showGalaxy && <GlassBtn label={paused ? "▶" : "⏸"} onPress={() => setPaused(v => !v)} />}
               <GlassBtn label="i" onPress={() => setShowCredits(v => !v)} />
               <GlassBtn label="⌂" onPress={() => {
-                camRef.current = showEarthHub ? { yaw: 0.2, pitch: 0.5, zoom: 14 } : { yaw: 0.18, pitch: 0.36, zoom: 38 };
+                camRef.current = showEarthHub
+                  ? { yaw: 0.2, pitch: 0.5, zoom: 14 }
+                  : showGalaxy
+                    ? { yaw: 0.55, pitch: 0.62, zoom: 11 }
+                    : { yaw: 0.18, pitch: 0.36, zoom: 38 };
                 setZoomLevel(camRef.current.zoom);
                 setFloatingCard(null);
               }} />
@@ -571,8 +675,16 @@ export default function App() {
           </View>
         </SafeAreaView>
 
+        {!showCredits && (
+          <View style={ui.zoomHud} pointerEvents="auto">
+            <GlassBtn label="−" onPress={() => setCameraZoom(camRef.current.zoom + 10)} small />
+            <Text style={ui.zoomHudVal}>{Math.round(zoomLevel)}</Text>
+            <GlassBtn label="+" onPress={() => setCameraZoom(camRef.current.zoom - 8)} small />
+          </View>
+        )}
+
         {/* Floating card — planet */}
-        {floatingCard === "planet" && !showEarthHub && (
+        {floatingCard === "planet" && !showEarthHub && !showGalaxy && (
           <View style={ui.floatingCard} pointerEvents="auto">
             <LinearGradient colors={selectedPlanet.gradientColors} style={ui.fcGradHeader}>
               <View style={ui.fcRow}>
@@ -588,8 +700,7 @@ export default function App() {
             </LinearGradient>
             <View style={ui.fcBody}>
               <Text style={ui.fcFact} numberOfLines={2}>{selectedPlanet.funFacts[0]}</Text>
-              {/* Planet Internal Structure */}
-              <PlanetStructureView planet={selectedPlanet} />
+              <Text style={[ui.fcFact, { fontStyle: "normal", color: C.cyan }]}>3D core is in the sky — open Lab or the sheet for layer names.</Text>
               <View style={ui.fcBtns}>
                 <Pressable style={ui.fcBtn} onPress={() => { setSection("universe"); snapPanel(true); }}>
                   <Text style={ui.fcBtnText}>🔍  Explore</Text>
@@ -602,7 +713,7 @@ export default function App() {
           </View>
         )}
 
-        {floatingCard === "moon" && selectedMoon && !showEarthHub && (
+        {floatingCard === "moon" && selectedMoon && !showEarthHub && !showGalaxy && (
           <View style={ui.floatingCard} pointerEvents="auto">
             <LinearGradient colors={["#1a2a5e","#060c22"]} style={ui.fcGradHeader}>
               <View style={ui.fcRow}>
@@ -625,7 +736,7 @@ export default function App() {
           </View>
         )}
 
-        {floatingCard === "dwarf" && selectedDwarf && !showEarthHub && (
+        {floatingCard === "dwarf" && selectedDwarf && !showEarthHub && !showGalaxy && (
           <View style={ui.floatingCard} pointerEvents="auto">
             <LinearGradient colors={["#1e1040","#080520"]} style={ui.fcGradHeader}>
               <View style={ui.fcRow}>
@@ -645,6 +756,26 @@ export default function App() {
           </View>
         )}
 
+        {floatingCard === "comet" && !showEarthHub && !showGalaxy && (
+          <View style={ui.floatingCard} pointerEvents="auto">
+            <LinearGradient colors={["#102040","#050814"]} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcEmoji}>☄️</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={ui.fcName}>{HALLEY.name}</Text>
+                  <Text style={ui.fcNick}>PERIODIC COMET</Text>
+                </View>
+                <Pressable onPress={() => setFloatingCard(null)}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <Text style={ui.fcFact}>A 76-year visitor. The ion tail always points away from the Sun; it brightens inside about {HALLEY.tail.activeDistance} scene units of perihelion.</Text>
+            </View>
+          </View>
+        )}
+
         {showCredits && (
           <View style={ui.floatingCard} pointerEvents="auto">
             <LinearGradient colors={["#0a1a3a","#030c1e"]} style={ui.fcGradHeader}>
@@ -657,7 +788,7 @@ export default function App() {
             </LinearGradient>
             <View style={ui.fcBody}>
               <Text style={ui.fcFact}>{TEXTURE_CREDIT}</Text>
-              <Text style={ui.fcFact}>Facts compiled from NASA, ESA, and ISRO public materials. Physics runs on-device. Cosmo uses Groq when online.</Text>
+              <Text style={ui.fcFact}>See CREDITS.md for Kepler math, galaxy generator, moon catalog, and explorer licenses. Facts from NASA, ESA, and ISRO. Physics on-device. Cosmo uses Groq when online.</Text>
             </View>
           </View>
         )}
@@ -734,20 +865,23 @@ export default function App() {
             </View>
           </View>
 
-          {/* Tab grid — 2 rows × 4 columns, compact and professional */}
-          <View style={ui.tabGrid}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={ui.tabScroll}
+            contentContainerStyle={ui.tabRail}
+          >
             {SECTIONS.map(s => (
               <Pressable
                 key={s.id}
-                style={[ui.tabTile, section === s.id && ui.tabTileActive]}
+                style={[ui.tab, section === s.id && ui.tabActive]}
                 onPress={() => switchToSection(s.id)}
               >
-                <Text style={[ui.tabTileEmoji, section === s.id && ui.tabTileEmojiActive]}>{s.emoji}</Text>
-                <Text style={[ui.tabTileLabel, section === s.id && ui.tabTileLabelActive]} numberOfLines={1}>{s.label}</Text>
-                {section === s.id && <View style={ui.tabTileDot} />}
+                <Text style={ui.tabEmoji}>{s.emoji}</Text>
+                <Text style={[ui.tabLabel, section === s.id && ui.tabLabelActive]} numberOfLines={1}>{s.label}</Text>
               </Pressable>
             ))}
-          </View>
+          </ScrollView>
 
           {/* Content */}
           <ScrollView
@@ -760,7 +894,8 @@ export default function App() {
             directionalLockEnabled
             scrollEventThrottle={16}
           >
-            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} selectedDeep={selectedDeep} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} onDeep={id => onDeepTapped(id)} speed={speed} setSpeed={setSpeed} zoomLevel={zoomLevel} zoomIn={() => setCameraZoom(camRef.current.zoom - 8)} zoomOut={() => setCameraZoom(camRef.current.zoom + 12)} onLearnLink={(url) => Linking.openURL(url).catch(() => undefined)} />}
+            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} selectedDeep={selectedDeep} selectedDwarf={selectedDwarf} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} onDeep={id => onDeepTapped(id)} onDwarf={id => onDwarfTapped(id)} onComet={() => { setFloatingCard("comet"); markExplored(HALLEY.id); }} speed={speed} setSpeed={setSpeed} trueScale={trueScale} setTrueScale={setTrueScale} simDateLabel={simDateLabel} zoomLevel={zoomLevel} zoomIn={() => setCameraZoom(camRef.current.zoom - 8)} zoomOut={() => setCameraZoom(camRef.current.zoom + 12)} onLearnLink={(url) => Linking.openURL(url).catch(() => undefined)} />}
+            {section === "galaxy" && <GalaxyPanel selectedStar={selectedStar} selectedDeep={selectedDeep} onWarp={onGalaxySceneTapped} />}
             {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { onSatTapped(id); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
             {section === "agencies" && <AgenciesPanel selectedAgencyId={selectedAgencyId} onSelect={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} />}
             {section === "missions" && <MissionsPanel />}
@@ -779,6 +914,7 @@ export default function App() {
 // ─── HOME SCREEN ──────────────────────────────────────────────────────────────
 const HOME_TILES: Array<{ id: string; emoji: string; label: string; sub: string; grad: [string, string] }> = [
   { id: "universe",  emoji: "🌌", label: "Universe",  sub: "3D Solar System",        grad: ["#0d1f52","#030b22"] },
+  { id: "galaxy",    emoji: "🌀", label: "Galaxy",    sub: "Spiral + star warp",     grad: ["#1a0830","#060014"] },
   { id: "earthhub",  emoji: "🌍", label: "Earth Hub", sub: "Satellites in orbit",    grad: ["#012240","#000d18"] },
   { id: "agencies",  emoji: "🏛",  label: "Agencies",  sub: "Who explores space",     grad: ["#220644","#0c0120"] },
   { id: "missions",  emoji: "🚀", label: "Missions",  sub: "Historic journeys",      grad: ["#281400","#100600"] },
@@ -913,789 +1049,12 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
   );
 }
 
-// ─── 3D SOLAR SYSTEM SCENE ───────────────────────────────────────────────────
-function SolarScene({
-  selectedId, paused, speed, camRef, camTarget, motionRef, isInteracting,
-  pendingTap, planetScreenPos, labInputs, onPlanetTapped, zoomLevel,
-}: {
-  selectedId: string; paused: boolean; speed: number;
-  camRef: React.MutableRefObject<{ yaw: number; pitch: number; zoom: number }>;
-  camTarget: React.MutableRefObject<{ yaw: number; active: boolean }>;
-  motionRef: React.MutableRefObject<{ x: number; y: number }>;
-  isInteracting: React.MutableRefObject<boolean>;
-  pendingTap: React.MutableRefObject<{ x: number; y: number } | null>;
-  planetScreenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-  labInputs: LabInputs;
-  onPlanetTapped: (id: string) => void;
-  zoomLevel: number;
-}) {
-  return (
-    <>
-      {/* Realistic space lighting: dim ambient + point sun */}
-      <ambientLight intensity={0.018} color="#0a1020" />
-      <pointLight position={[0, 0, 0]} intensity={900} color="#fff4cc" decay={2} distance={0} />
-      {/* Very subtle cold fill from opposite */}
-      <pointLight position={[0, 40, 0]} intensity={6} color="#1020aa" decay={2} />
-      <CameraRig camRef={camRef} camTarget={camTarget} motionRef={motionRef} isInteracting={isInteracting} earthHub={false} />
-      <ObjectTapDetector pendingTap={pendingTap} screenPos={planetScreenPos} onTapped={onPlanetTapped} />
-      <StarSky />
-      <MilkyWayBand />
-      <StarField />
-      {/* Deep space nebulae + galaxies visible when zoomed out */}
-      {zoomLevel > 65 && <DeepSpaceEnvironment zoom={zoomLevel} />}
-      <Sun />
-      <AsteroidBelt paused={paused} speed={speed} />
-      {PLANETS.map(pl => (
-        <OrbitingPlanet
-          key={pl.id} planet={pl} selected={pl.id === selectedId}
-          paused={paused} speed={speed}
-          labInputs={pl.id === selectedId ? labInputs : undefined}
-          screenPos={planetScreenPos}
-        />
-      ))}
-      {DWARF_PLANETS.map(d => (
-        <OrbitingDwarf key={d.id} dwarf={d} selected={d.id === selectedId} paused={paused} speed={speed} screenPos={planetScreenPos} />
-      ))}
-      {DEEP_SPACE_OBJECTS.map(object => (
-        <DeepSpaceMarker key={object.id} object={object} screenPos={planetScreenPos} />
-      ))}
-    </>
-  );
-}
-
-// ─── 3D EARTH HUB SCENE ──────────────────────────────────────────────────────
-function EarthHubScene({
-  camRef, motionRef, isInteracting, pendingTap, satScreenPos, onSatTapped,
-  agencyFilter, selectedSatId,
-}: {
-  camRef: React.MutableRefObject<{ yaw: number; pitch: number; zoom: number }>;
-  motionRef: React.MutableRefObject<{ x: number; y: number }>;
-  isInteracting: React.MutableRefObject<boolean>;
-  pendingTap: React.MutableRefObject<{ x: number; y: number } | null>;
-  satScreenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-  onSatTapped: (id: string) => void;
-  agencyFilter: Satellite[] | null;
-  selectedSatId: string | null;
-}) {
-  // Override camera for Earth Hub
-  useEffect(() => {
-    camRef.current = { yaw: 0.3, pitch: 0.5, zoom: 13 };
-  }, []);
-
-  const visibleSats = satsForEarthHub(agencyFilter ?? SATELLITES);
-
-  return (
-    <>
-      <ambientLight intensity={0.08} />
-      <directionalLight
-        position={[12, 4, 8]}
-        intensity={2.2}
-        color="#fff6e0"
-      />
-      <directionalLight position={[-5, -2, -5]} intensity={0.12} color="#2244aa" />
-      <hemisphereLight args={["#001133", "#000011", 0.06]} />
-      <CameraRig camRef={camRef} motionRef={motionRef} isInteracting={isInteracting} earthHub={true} />
-      <ObjectTapDetector pendingTap={pendingTap} screenPos={satScreenPos} onTapped={onSatTapped} />
-      <StarSky dim />
-      <StarField dim />
-      <MilkyWayBand />
-      {/* Earth */}
-      <Earth />
-      {/* Satellite orbits */}
-      {visibleSats.map(sat => (
-        <OrbitingSatellite
-          key={sat.id}
-          sat={sat}
-          selected={sat.id === selectedSatId}
-          screenPos={satScreenPos}
-          dimmed={agencyFilter !== null && sat.agencyId !== (agencyFilter[0]?.agencyId ?? "")}
-        />
-      ))}
-    </>
-  );
-}
-
-// ── Earth ─────────────────────────────────────────────────────────────────────
-function Earth() {
-  const earthRef  = useRef<THREE.Mesh>(null);
-  const cloud2Ref = useRef<THREE.Mesh>(null);
-  const atmoRef   = useRef<THREE.Mesh>(null);
-  const limb1Ref  = useRef<THREE.Mesh>(null);
-  const limb2Ref  = useRef<THREE.Mesh>(null);
-  const dayMap = useBodyTexture("earth");
-
-  useFrame((state, delta) => {
-    const t = state.clock.getElapsedTime();
-    if (earthRef.current)  earthRef.current.rotation.y  += delta * 0.068;
-    if (cloud2Ref.current) cloud2Ref.current.rotation.y -= delta * 0.055;
-    if (atmoRef.current)  (atmoRef.current.material  as THREE.MeshBasicMaterial).opacity = 0.22 + Math.sin(t * 0.55) * 0.06;
-    if (limb1Ref.current) (limb1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.11 + Math.sin(t * 0.38 + 1.2) * 0.03;
-    if (limb2Ref.current) (limb2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.22 + 2.5) * 0.012;
-  });
-
-  return (
-    <group>
-      <mesh ref={earthRef}>
-        <sphereGeometry args={[2.2, 48, 48]} />
-        <meshStandardMaterial
-          map={dayMap ?? undefined}
-          color={dayMap ? "#ffffff" : "#1a4fa8"}
-          roughness={0.62}
-          metalness={0.04}
-          emissive="#000820"
-          emissiveIntensity={0.25}
-        />
-      </mesh>
-      <mesh ref={cloud2Ref} rotation={[0.08, 0.3, -0.06]}>
-        <sphereGeometry args={[2.235, 32, 32]} />
-        <meshBasicMaterial
-          color="#d8eaff"
-          transparent opacity={0.12}
-          depthWrite={false}
-        />
-      </mesh>
-
-      {/* ── Layer 4: Inner Atmosphere — Rayleigh scattering simulation ──────
-          BackSide renders the limb glow visible from space (blue edge of Earth)
-          This is the technique SpaceEngine uses for atmospheric scattering */}
-      <mesh ref={atmoRef}>
-        <sphereGeometry args={[2.38, 48, 48]} />
-        <meshBasicMaterial
-          color="#2060ff"
-          transparent opacity={0.22}
-          side={THREE.BackSide}
-          blending={THREE.AdditiveBlending} depthWrite={false}
-        />
-      </mesh>
-
-      {/* ── Layer 5: Outer atmosphere limb — the blue halo visible from ISS ─ */}
-      <mesh ref={limb1Ref}>
-        <sphereGeometry args={[2.58, 36, 36]} />
-        <meshBasicMaterial
-          color="#1144cc"
-          transparent opacity={0.11}
-          blending={THREE.AdditiveBlending} depthWrite={false}
-        />
-      </mesh>
-
-      {/* ── Layer 6: Far outer halo — exosphere/magnetosphere glow ──────────  */}
-      <mesh ref={limb2Ref}>
-        <sphereGeometry args={[2.90, 24, 24]} />
-        <meshBasicMaterial
-          color="#0822aa"
-          transparent opacity={0.04}
-          blending={THREE.AdditiveBlending} depthWrite={false}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-
-// ── Orbiting Satellite (Earth Hub) ───────────────────────────────────────────
-function OrbitingSatellite({
-  sat, selected, screenPos, dimmed,
-}: {
-  sat: Satellite; selected: boolean;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-  dimmed: boolean;
-}) {
-  const groupRef  = useRef<THREE.Group>(null);
-  const dotRef    = useRef<THREE.Group>(null);
-  const glowRef   = useRef<THREE.Mesh>(null);
-
-  const vRadius = satVisualRadius(sat.altitude);
-  const orbSpeed = (2 * Math.PI) / (sat.period * 30); // scale for visual interest
-  const incRad   = sat.inclination * (Math.PI / 180);
-  const startAng = (sat.id.charCodeAt(0) * 137 + sat.id.charCodeAt(1) * 31) % (Math.PI * 2);
-
-  useFrame((state, delta) => {
-    const { camera } = state;
-    if (groupRef.current) groupRef.current.rotation.y += delta * orbSpeed;
-
-    if (selected && glowRef.current) {
-      const t = state.clock.getElapsedTime();
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.5 + Math.sin(t * 3) * 0.2;
-    }
-
-    if (dotRef.current) {
-      const wp = new THREE.Vector3();
-      dotRef.current.getWorldPosition(wp);
-      wp.project(camera);
-      screenPos.current[sat.id] = {
-        x: ((wp.x + 1) / 2) * screenW,
-        y: ((-wp.y + 1) / 2) * screenH,
-      };
-    }
-  });
-
-  const orbitColor = dimmed ? "#152040" : sat.color;
-  const dotColor   = dimmed ? "#253060" : sat.color;
-  const dotSize    = selected ? 0.14 : 0.085;
-
-  // Orbit ring is a circle at the satellite's inclination
-  const orbitPts = useMemo(() => {
-    const pts: number[] = [];
-    for (let i = 0; i <= 120; i++) {
-      const a = (i / 120) * Math.PI * 2;
-      pts.push(Math.cos(a) * vRadius, 0, Math.sin(a) * vRadius);
-    }
-    return new Float32Array(pts);
-  }, [vRadius]);
-
-  return (
-    <group rotation={[incRad, 0, 0]}>
-      {/* Orbit ring */}
-      <line>
-        <bufferGeometry><bufferAttribute attach="attributes-position" args={[orbitPts, 3]} /></bufferGeometry>
-        <lineBasicMaterial color={orbitColor} transparent opacity={selected ? 0.65 : dimmed ? 0.08 : 0.22} />
-      </line>
-      {/* Satellite dot, orbiting the ring */}
-      <group ref={groupRef} rotation={[0, startAng, 0]}>
-        <group ref={dotRef} position={[vRadius, 0, 0]} scale={selected ? 1.25 : 1}>
-          <SatelliteModel color={dotColor} size={dotSize} type={sat.type} />
-        </group>
-        {/* Selection glow */}
-        {selected && (
-          <mesh ref={glowRef} position={[vRadius, 0, 0]}>
-            <sphereGeometry args={[dotSize * 2.5, 10, 10]} />
-            <meshBasicMaterial color={sat.color} transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} />
-          </mesh>
-        )}
-      </group>
-    </group>
-  );
-}
-
-function SatelliteModel({ color, size, type }: { color: string; size: number; type: Satellite["type"] }) {
-  const panelSpan = type === "Communication" || type === "Navigation" ? 3.8 : 2.8;
-  const bodyLength = type === "Crewed" ? size * 2.6 : size * 1.8;
-  return (
-    <group rotation={[0.25, 0.45, 0.15]}>
-      <mesh>
-        <boxGeometry args={[bodyLength, size * 1.15, size * 1.15]} />
-        <meshStandardMaterial color="#d8e6ff" roughness={0.38} metalness={0.48} emissive={color} emissiveIntensity={0.12} />
-      </mesh>
-      <mesh position={[-bodyLength * 0.72, 0, 0]}>
-        <boxGeometry args={[size * 0.18, size * 0.9, size * panelSpan]} />
-        <meshStandardMaterial color="#153d8f" roughness={0.32} metalness={0.15} emissive="#0b4cff" emissiveIntensity={0.18} />
-      </mesh>
-      <mesh position={[bodyLength * 0.72, 0, 0]}>
-        <boxGeometry args={[size * 0.18, size * 0.9, size * panelSpan]} />
-        <meshStandardMaterial color="#153d8f" roughness={0.32} metalness={0.15} emissive="#0b4cff" emissiveIntensity={0.18} />
-      </mesh>
-      <mesh position={[0, size * 0.85, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <coneGeometry args={[size * 0.58, size * 0.5, 18]} />
-        <meshStandardMaterial color="#cbd7e8" roughness={0.48} metalness={0.55} />
-      </mesh>
-      <mesh position={[0, -size * 0.74, 0]}>
-        <sphereGeometry args={[size * 0.42, 12, 12]} />
-        <meshBasicMaterial color={color} transparent opacity={0.78} />
-      </mesh>
-    </group>
-  );
-}
-
-// ── Camera Rig ────────────────────────────────────────────────────────────────
-function CameraRig({
-  camRef, camTarget, motionRef, isInteracting, earthHub,
-}: {
-  camRef: React.MutableRefObject<{ yaw: number; pitch: number; zoom: number }>;
-  camTarget?: React.MutableRefObject<{ yaw: number; active: boolean }>;
-  motionRef: React.MutableRefObject<{ x: number; y: number }>;
-  isInteracting: React.MutableRefObject<boolean>;
-  earthHub: boolean;
-}) {
-  const { camera } = useThree();
-  const lastInteract = useRef(0);
-  const autoYaw      = useRef(camRef.current.yaw);
-  const dampMotion   = useRef({ x: 0, y: 0 });
-
-  useFrame((_, delta) => {
-    if (isInteracting.current) {
-      lastInteract.current = Date.now();
-      if (camTarget?.current) camTarget.current.active = false; // user took over
-    }
-
-    // Smooth yaw focus animation toward tapped planet
-    if (camTarget?.current.active) {
-      const diff = camTarget.current.yaw - camRef.current.yaw;
-      camRef.current.yaw += diff * 0.08;
-      if (Math.abs(diff) < 0.002) camTarget.current.active = false;
-      autoYaw.current = camRef.current.yaw;
-    } else if (Date.now() - lastInteract.current > 3500 && !isInteracting.current) {
-      autoYaw.current += delta * (earthHub ? 0.025 : 0.038);
-      camRef.current.yaw = autoYaw.current;
-    } else {
-      autoYaw.current = camRef.current.yaw;
-    }
-
-    dampMotion.current.x += (motionRef.current.x - dampMotion.current.x) * 0.12;
-    dampMotion.current.y += (motionRef.current.y - dampMotion.current.y) * 0.12;
-    const yaw   = camRef.current.yaw   + dampMotion.current.y * 0.08;
-    const pitch = camRef.current.pitch + dampMotion.current.x * 0.05;
-    const r     = camRef.current.zoom;
-    camera.position.lerp(
-      new THREE.Vector3(
-        Math.sin(yaw) * Math.cos(pitch) * r,
-        Math.sin(pitch) * r,
-        Math.cos(yaw) * Math.cos(pitch) * r
-      ),
-      0.07
-    );
-    camera.lookAt(0, 0, 0);
-  });
-  return null;
-}
-
-// ── Generic object tap detector ───────────────────────────────────────────────
-function ObjectTapDetector({
-  pendingTap, screenPos, onTapped,
-}: {
-  pendingTap: React.MutableRefObject<{ x: number; y: number } | null>;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-  onTapped: (id: string) => void;
-}) {
-  useFrame(() => {
-    if (!pendingTap.current) return;
-    const tap = pendingTap.current; pendingTap.current = null;
-    let best: string | null = null; let bestDist = 75;
-    Object.entries(screenPos.current).forEach(([id, pos]) => {
-      const d = Math.hypot(pos.x - tap.x, pos.y - tap.y);
-      if (d < bestDist) { bestDist = d; best = id; }
-    });
-    if (best) onTapped(best);
-  });
-  return null;
-}
-
-// ── Sun — 6-layer animated corona + solar shimmer ────────────────────────────
-function Sun() {
-  const surf    = useRef<THREE.Mesh>(null);
-  const l1      = useRef<THREE.Mesh>(null);
-  const l2      = useRef<THREE.Mesh>(null);
-  const l3      = useRef<THREE.Mesh>(null);
-  const sunCore = useRef<THREE.Mesh>(null);
-  const sunMap  = useBodyTexture("sun");
-
-  useFrame(({ clock }) => {
-    const t  = clock.getElapsedTime();
-    const s1 = Math.sin(t * 1.80);
-    const s2 = Math.sin(t * 1.15 + 1.1);
-    const s3 = Math.sin(t * 0.72 + 2.3);
-
-    if (sunCore.current) {
-      sunCore.current.rotation.y += 0.0008;
-      sunCore.current.rotation.z += 0.0003;
-      const mat = sunCore.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 1.0 + s1 * 0.18;
-    }
-    if (surf.current)
-      (surf.current.material as THREE.MeshBasicMaterial).opacity = 0.38 + s1 * 0.08;
-    if (l1.current)
-      (l1.current.material as THREE.MeshBasicMaterial).opacity = 0.14 + s2 * 0.04;
-    if (l2.current)
-      (l2.current.material as THREE.MeshBasicMaterial).opacity = 0.055 + s3 * 0.018;
-    if (l3.current)
-      (l3.current.material as THREE.MeshBasicMaterial).opacity = 0.018 + s1 * 0.006;
-  });
-
-  return (
-    <group>
-      {/* Core — PBR emissive sun surface */}
-      <mesh ref={sunCore}>
-        <sphereGeometry args={[3.2, 48, 48]} />
-        <meshStandardMaterial
-          key={sunMap?.uuid ?? "nomap_sun"}
-          map={sunMap ?? undefined}
-          color={sunMap ? "#ffffff" : "#fff4a0"}
-          emissive="#ff9200"
-          emissiveMap={sunMap ?? undefined}
-          emissiveIntensity={1.0}
-          roughness={0.9}
-          metalness={0.0}
-        />
-      </mesh>
-      {/* Surface shimmer */}
-      <mesh ref={surf}>
-        <sphereGeometry args={[3.28, 32, 32]} />
-        <meshBasicMaterial color="#ffcc00" transparent opacity={0.38} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      {/* Inner corona — tight and golden */}
-      <mesh ref={l1}>
-        <sphereGeometry args={[4.0, 24, 24]} />
-        <meshBasicMaterial color="#ff9900" transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      {/* Mid corona — subtle red-orange */}
-      <mesh ref={l2}>
-        <sphereGeometry args={[5.2, 24, 24]} />
-        <meshBasicMaterial color="#ff5500" transparent opacity={0.055} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      {/* Outer halo — very faint */}
-      <mesh ref={l3}>
-        <sphereGeometry args={[7.0, 16, 16]} />
-        <meshBasicMaterial color="#ff3300" transparent opacity={0.018} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-    </group>
-  );
-}
-
-// ── Star Field ────────────────────────────────────────────────────────────────
-function StarSky({ dim }: { dim?: boolean }) {
-  const milky = useBodyTexture("milkyWay");
-  const stars = useBodyTexture("stars");
-  const map = milky ?? stars;
-  return (
-    <mesh>
-      <sphereGeometry args={[380, 24, 16]} />
-      <meshBasicMaterial
-        map={map ?? undefined}
-        color={map ? "#202848" : "#050816"}
-        side={THREE.BackSide}
-        depthWrite={false}
-        opacity={dim ? 0.28 : 0.42}
-        transparent
-      />
-    </mesh>
-  );
-}
-
-function mkStars(n: number, r0: number, r1: number) {
-  const v: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const r=r0+Math.random()*(r1-r0), theta=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
-    v.push(r*Math.sin(phi)*Math.cos(theta), r*Math.cos(phi), r*Math.sin(phi)*Math.sin(theta));
-  }
-  return new Float32Array(v);
-}
-function StarField({ dim }: { dim?: boolean }) {
-  // Size-attenuated stars look far more realistic — stars scale with camera distance
-  const v1=useMemo(()=>mkStars(900,92,180),[]);
-  const v2=useMemo(()=>mkStars(280,90,155),[]);
-  const v3=useMemo(()=>mkStars(80,90,145),[]);
-  const v4=useMemo(()=>mkStars(90,108,170),[]);
-  const v5=useMemo(()=>mkStars(28,95,150),[]);
-  const o = dim ? 0.35 : 1;
-  return (
-    <>
-      {/* Dim distant field */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[v1,3]}/></bufferGeometry>
-        <pointsMaterial size={0.12} sizeAttenuation color="#c8d8ff" transparent opacity={0.42*o}/></points>
-      {/* Medium white */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[v2,3]}/></bufferGeometry>
-        <pointsMaterial size={0.28} sizeAttenuation color="#ffffff" transparent opacity={0.92*o}/></points>
-      {/* Large warm giants */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[v3,3]}/></bufferGeometry>
-        <pointsMaterial size={0.60} sizeAttenuation color="#fff3d8" transparent opacity={o}/></points>
-      {/* Blue-tinted stars (hot O/B type) — additive for glow */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[v4,3]}/></bufferGeometry>
-        <pointsMaterial size={0.20} sizeAttenuation color="#88aaff" transparent opacity={0.70*o} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      {/* Super-bright warm giants — bloom simulation */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[v5,3]}/></bufferGeometry>
-        <pointsMaterial size={1.1} sizeAttenuation color="#ffeecc" transparent opacity={0.95*o} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-    </>
-  );
-}
-
-// ── Milky Way Band ────────────────────────────────────────────────────────────
-function MilkyWayBand() {
-  const v=useMemo(()=>{ const a:number[]=[];for(let i=0;i<1600;i++){const ang=Math.random()*Math.PI*2,r=120+Math.random()*60,sp=(Math.random()-0.5)*28*(1-Math.abs(Math.sin(ang))*0.5);a.push(Math.cos(ang)*r,sp,Math.sin(ang)*r);}return new Float32Array(a);},[]);
-  return <points rotation={[0.42,0,0.26]}><bufferGeometry><bufferAttribute attach="attributes-position" args={[v,3]}/></bufferGeometry><pointsMaterial size={0.07} color="#b8ccee" transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false}/></points>;
-}
-
-// ── Deep Space Environment (nebulae + galaxy clusters) ────────────────────────
-function mkCloud(cx:number,cy:number,cz:number,radius:number,count:number){
-  const v:number[]=[];
-  for(let i=0;i<count;i++){
-    const theta=Math.random()*Math.PI*2,phi=Math.acos(2*Math.random()-1);
-    const r=radius*(0.3+Math.random()*0.7);
-    v.push(cx+r*Math.sin(phi)*Math.cos(theta),cy+r*Math.cos(phi)*0.45,cz+r*Math.sin(phi)*Math.sin(theta));
-  }
-  return new Float32Array(v);
-}
-function DeepSpaceEnvironment({ zoom }: { zoom: number }) {
-  const opacity = Math.min(1,(zoom-65)/35);
-  // Orion Nebula lookalike — warm orange/pink, 300 units away
-  const orion    = useMemo(()=>mkCloud(-220,40,-180,38,420),[]);
-  // Pillars of Creation lookalike — teal/blue
-  const pillars  = useMemo(()=>mkCloud(280,-30,260,28,320),[]);
-  // Carina nebula — violet/purple
-  const carina   = useMemo(()=>mkCloud(60,80,-320,42,360),[]);
-  // Distant galaxy clusters (tight balls of stars)
-  const gal1 = useMemo(()=>mkCloud(-380,20,0,18,180),[]);
-  const gal2 = useMemo(()=>mkCloud(0,-40,400,14,140),[]);
-  const gal3 = useMemo(()=>mkCloud(350,60,-350,16,160),[]);
-  const gal4 = useMemo(()=>mkCloud(-300,-50,300,12,120),[]);
-  return (
-    <>
-      {/* Orion Nebula */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[orion,3]}/></bufferGeometry>
-        <pointsMaterial size={0.55} color="#ff8844" transparent opacity={0.28*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[orion,3]}/></bufferGeometry>
-        <pointsMaterial size={1.2}  color="#ff4488" transparent opacity={0.14*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      {/* Pillars of Creation */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[pillars,3]}/></bufferGeometry>
-        <pointsMaterial size={0.48} color="#44ddcc" transparent opacity={0.24*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[pillars,3]}/></bufferGeometry>
-        <pointsMaterial size={1.0}  color="#88ffee" transparent opacity={0.10*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      {/* Carina Nebula */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[carina,3]}/></bufferGeometry>
-        <pointsMaterial size={0.52} color="#cc44ff" transparent opacity={0.22*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[carina,3]}/></bufferGeometry>
-        <pointsMaterial size={1.1}  color="#ff88ff" transparent opacity={0.09*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      {/* Distant Galaxies */}
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal1,3]}/></bufferGeometry>
-        <pointsMaterial size={0.3} color="#ffe8cc" transparent opacity={0.55*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal2,3]}/></bufferGeometry>
-        <pointsMaterial size={0.3} color="#ccddff" transparent opacity={0.55*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal3,3]}/></bufferGeometry>
-        <pointsMaterial size={0.3} color="#ffd8aa" transparent opacity={0.50*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal4,3]}/></bufferGeometry>
-        <pointsMaterial size={0.3} color="#ddeeff" transparent opacity={0.48*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
-    </>
-  );
-}
-
-// ── Orbiting Planet ───────────────────────────────────────────────────────────
-function OrbitingPlanet({
-  planet, selected, paused, speed, labInputs, screenPos,
-}: {
-  planet: Planet; selected: boolean; paused: boolean; speed: number;
-  labInputs?: LabInputs;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-}) {
-  const orbitRef  = useRef<THREE.Group>(null);
-  const planetRef = useRef<THREE.Mesh>(null);
-  const glowRef   = useRef<THREE.Mesh>(null);
-  const vR = Math.max(0.15, planet.visualRadius * (selected ? (labInputs?.radiusScale ?? 1) : 1));
-  const texKey = PLANET_TEXTURE_KEY[planet.id];
-  const map = useBodyTexture(texKey);
-  const venusAtmo = useBodyTexture(planet.id === "venus" ? "venusAtmosphere" : undefined);
-  const moons = MOONS_BY_PLANET[planet.id] ?? [];
-
-  useFrame((state, delta) => {
-    if (!paused) {
-      if (orbitRef.current)  orbitRef.current.rotation.y  += delta * planet.orbitSpeed  * speed;
-      if (planetRef.current) planetRef.current.rotation.y += delta * planet.rotationSpeed * (labInputs?.rotationScale ?? 1) * speed;
-    }
-    if (selected && glowRef.current) {
-      const t = state.clock.getElapsedTime();
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.14 + Math.sin(t * 2.2) * 0.07;
-    }
-    if (planetRef.current) {
-      const wp = new THREE.Vector3(); planetRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[planet.id] = { x:((wp.x+1)/2)*screenW, y:((-wp.y+1)/2)*screenH };
-    }
-  });
-
-  return (
-    <group ref={orbitRef}>
-      {/* Orbit ring */}
-      {(() => {
-        const pts = new THREE.EllipseCurve(0,0,planet.orbitRadius,planet.orbitRadius,0,Math.PI*2).getPoints(160);
-        const arr = new Float32Array(pts.flatMap(p=>[p.x,0,p.y]));
-        return (
-          <line><bufferGeometry><bufferAttribute attach="attributes-position" args={[arr,3]}/></bufferGeometry>
-          <lineBasicMaterial color={selected?C.cyan:"#152850"} transparent opacity={selected?0.75:0.22}/></line>
-        );
-      })()}
-      <group position={[planet.orbitRadius,0,0]}>
-        <mesh ref={planetRef}>
-          <sphereGeometry args={[vR, 64, 64]} />
-          <meshStandardMaterial
-            key={map?.uuid ?? "nomap_" + planet.id}
-            map={map ?? undefined}
-            color={map ? "#ffffff" : planet.color}
-            roughness={planet.id === "earth" ? 0.52 : planet.id === "mercury" ? 0.92 : planet.id === "venus" ? 0.72 : 0.76}
-            metalness={planet.id === "mercury" ? 0.28 : 0.02}
-            emissive={selected ? new THREE.Color(planet.color).multiplyScalar(0.10) : new THREE.Color(0, 0, 0)}
-            emissiveIntensity={selected ? 1 : 0}
-          />
-        </mesh>
-        {planet.id === "venus" && (
-          <mesh>
-            <sphereGeometry args={[vR * 1.03, 24, 24]} />
-            <meshStandardMaterial map={venusAtmo ?? undefined} color={venusAtmo ? "#ffffff" : "#e0b56e"} transparent opacity={0.55} depthWrite={false} />
-          </mesh>
-        )}
-        <mesh><sphereGeometry args={[vR*1.10,32,32]}/><meshBasicMaterial color={planet.color} transparent opacity={0.10} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>
-        {selected&&<mesh ref={glowRef}><sphereGeometry args={[vR*1.26,24,24]}/><meshBasicMaterial color={C.cyan} transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>}
-        {planet.ring&&(
-          <group>
-            <mesh rotation={[Math.PI/2.15,0,0.18]}><ringGeometry args={[vR*1.38,vR*1.90,128]}/><meshBasicMaterial color="#e8d9a8" transparent opacity={0.60} side={THREE.DoubleSide} depthWrite={false}/></mesh>
-            <mesh rotation={[Math.PI/2.15,0,0.18]}><ringGeometry args={[vR*1.92,vR*2.26,128]}/><meshBasicMaterial color="#c8b880" transparent opacity={0.38} side={THREE.DoubleSide} depthWrite={false}/></mesh>
-          </group>
-        )}
-        {moons.map(moon => (
-          <OrbitingMoon key={moon.id} moon={moon} planetRadius={vR} paused={paused} speed={speed} screenPos={screenPos} />
-        ))}
-      </group>
-    </group>
-  );
-}
-
-function OrbitingMoon({
-  moon, planetRadius, paused, speed, screenPos,
-}: {
-  moon: Moon; planetRadius: number; paused: boolean; speed: number;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const meshRef = useRef<THREE.Mesh>(null);
-  const map = useBodyTexture(moon.textureKey);
-  const r = Math.max(0.05, planetRadius * moon.visualRadius);
-  const d = planetRadius * moon.orbitScale;
-  const tilt = moon.orbitTilt * (Math.PI / 180);
-  const orbitPts = useMemo(() => {
-    const pts: number[] = [];
-    for (let i = 0; i <= 80; i++) {
-      const a = (i / 80) * Math.PI * 2;
-      pts.push(Math.cos(a) * d, 0, Math.sin(a) * d);
-    }
-    return new Float32Array(pts);
-  }, [d]);
-
-  useFrame((state, delta) => {
-    if (!paused && groupRef.current) groupRef.current.rotation.y += delta * moon.orbitSpeed * moon.orbitDirection * speed;
-    if (meshRef.current) {
-      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[moon.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
-    }
-  });
-
-  return (
-    <group rotation={[tilt, 0, 0]}>
-      <line>
-        <bufferGeometry><bufferAttribute attach="attributes-position" args={[orbitPts, 3]} /></bufferGeometry>
-        <lineBasicMaterial color={moon.color} transparent opacity={0.18} />
-      </line>
-    <group ref={groupRef}>
-      <mesh ref={meshRef} position={[d, 0, 0]}>
-        <sphereGeometry args={[r, 16, 16]} />
-        <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : moon.color} roughness={0.9} />
-      </mesh>
-    </group>
-    </group>
-  );
-}
-
-function DeepSpaceMarker({
-  object,
-  screenPos,
-}: {
-  object: DeepSpaceObject;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const haloRef = useRef<THREE.Mesh>(null);
-
-  useFrame((state) => {
-    const time = state.clock.getElapsedTime();
-    if (meshRef.current) {
-      meshRef.current.rotation.z += object.type === "Galaxy" ? 0.0015 : 0.0005;
-      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[object.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
-    }
-    if (haloRef.current) {
-      (haloRef.current.material as THREE.MeshBasicMaterial).opacity = 0.18 + Math.sin(time * 0.8) * 0.06;
-    }
-  });
-
-  if (object.type === "Galaxy") {
-    return (
-      <group position={object.position} rotation={[0.35, 0.2, -0.45]}>
-        <mesh ref={meshRef} scale={[1.9, 0.34, 1]}>
-          <sphereGeometry args={[object.visualRadius, 32, 16]} />
-          <meshBasicMaterial color={object.color} transparent opacity={0.28} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-        <mesh ref={haloRef} scale={[3.0, 0.12, 1.55]}>
-          <sphereGeometry args={[object.visualRadius, 24, 12]} />
-          <meshBasicMaterial color={object.color} transparent opacity={0.16} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-      </group>
-    );
-  }
-
-  if (object.type === "Nebula") {
-    return (
-      <group position={object.position}>
-        <mesh ref={meshRef}>
-          <sphereGeometry args={[object.visualRadius, 24, 16]} />
-          <meshBasicMaterial color={object.color} transparent opacity={0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-        <mesh ref={haloRef} scale={[1.8, 0.8, 1.25]}>
-          <sphereGeometry args={[object.visualRadius, 18, 12]} />
-          <meshBasicMaterial color={object.color} transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-      </group>
-    );
-  }
-
-  return (
-    <group position={object.position}>
-      <mesh ref={meshRef}>
-        <sphereGeometry args={[object.visualRadius, 16, 16]} />
-        <meshBasicMaterial color={object.color} />
-      </mesh>
-      <mesh ref={haloRef}>
-        <sphereGeometry args={[object.visualRadius * 3.4, 16, 16]} />
-        <meshBasicMaterial color={object.color} transparent opacity={0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-    </group>
-  );
-}
-
-function OrbitingDwarf({
-  dwarf, selected, paused, speed, screenPos,
-}: {
-  dwarf: DwarfPlanet; selected: boolean; paused: boolean; speed: number;
-  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
-}) {
-  const orbitRef = useRef<THREE.Group>(null);
-  const meshRef = useRef<THREE.Mesh>(null);
-  const map = useBodyTexture(dwarf.textureKey);
-
-  useFrame((state, delta) => {
-    if (!paused && orbitRef.current) orbitRef.current.rotation.y += delta * dwarf.orbitSpeed * speed;
-    if (!paused && meshRef.current) meshRef.current.rotation.y += delta * dwarf.rotationSpeed * speed;
-    if (meshRef.current) {
-      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[dwarf.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
-    }
-  });
-
-  const pts = useMemo(() => {
-    const curve = new THREE.EllipseCurve(0, 0, dwarf.orbitRadius, dwarf.orbitRadius, 0, Math.PI * 2);
-    return new Float32Array(curve.getPoints(120).flatMap(p => [p.x, 0, p.y]));
-  }, [dwarf.orbitRadius]);
-
-  return (
-    <group ref={orbitRef}>
-      <line>
-        <bufferGeometry><bufferAttribute attach="attributes-position" args={[pts, 3]} /></bufferGeometry>
-        <lineBasicMaterial color={selected ? C.gold : "#1a2840"} transparent opacity={selected ? 0.7 : 0.16} />
-      </line>
-      <mesh ref={meshRef} position={[dwarf.orbitRadius, 0, 0]}>
-        <sphereGeometry args={[dwarf.visualRadius, 24, 24]} />
-        <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : dwarf.color} roughness={0.88} />
-      </mesh>
-    </group>
-  );
-}
-
-// ── Asteroid Belt ─────────────────────────────────────────────────────────────
-function AsteroidBelt({ paused, speed }: { paused: boolean; speed: number }) {
-  const gRef = useRef<THREE.Group>(null);
-  const asts = useMemo(()=>Array.from({length:70},(_,i)=>{ const a=i*0.395,r=25.5+Math.sin(i*8.1)*2.3; return {pos:[Math.cos(a)*r,Math.sin(i*1.1)*0.2,Math.sin(a)*r] as [number,number,number], scale:0.055+(i%6)*0.018, color:["#7a706a","#8a8078","#6a5e58","#9a8e88"][i%4]}; }),[]);
-  useFrame((_,delta)=>{ if(!paused&&gRef.current) gRef.current.rotation.y+=delta*0.022*speed; });
-  return <group ref={gRef}>{asts.map((a,i)=><mesh key={i} position={a.pos} scale={a.scale}><dodecahedronGeometry args={[1,0]}/><meshStandardMaterial color={a.color} roughness={0.95}/></mesh>)}</group>;
-}
-
 // ─── UNIVERSE PANEL ──────────────────────────────────────────────────────────
-function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, onFocus, onMoon, onDeep, speed, setSpeed, zoomLevel, zoomIn, zoomOut, onLearnLink }: {
-  selectedPlanet: Planet; selectedMoon: Moon | null; selectedDeep: DeepSpaceObject | null;
-  onFocus: (id: string) => void; onMoon: (id: string) => void; onDeep: (id: string) => void;
-  speed: number; setSpeed: (v: number) => void; zoomLevel: number; zoomIn: () => void; zoomOut: () => void;
+function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, selectedDwarf, onFocus, onMoon, onDeep, onDwarf, onComet, speed, setSpeed, trueScale, setTrueScale, simDateLabel, zoomLevel, zoomIn, zoomOut, onLearnLink }: {
+  selectedPlanet: Planet; selectedMoon: Moon | null; selectedDeep: DeepSpaceObject | null; selectedDwarf: DwarfPlanet | null;
+  onFocus: (id: string) => void; onMoon: (id: string) => void; onDeep: (id: string) => void; onDwarf: (id: string) => void; onComet: () => void;
+  speed: number; setSpeed: (v: number) => void; trueScale: boolean; setTrueScale: (v: boolean | ((p: boolean) => boolean)) => void;
+  simDateLabel: string; zoomLevel: number; zoomIn: () => void; zoomOut: () => void;
   onLearnLink: (url: string) => void;
 }) {
   const [factIdx, setFactIdx] = useState(0);
@@ -1731,6 +1090,7 @@ function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, onFocus, on
         <>
           <View style={pw.statsRow}><MiniStat l="Gravity" v={`${selectedPlanet.gravity}g`} accent={C.cyan}/><MiniStat l="Day" v={selectedPlanet.day} accent={C.gold}/><MiniStat l="Moons" v={`${selectedPlanet.moons}`} accent={C.violet}/></View>
           <View style={pw.statsRow}><MiniStat l="Temp" v={`${selectedPlanet.temperature}°C`} accent={C.red}/><MiniStat l="Year" v={selectedPlanet.year} accent={C.green}/><MiniStat l="Dist" v={`${selectedPlanet.distanceAU} AU`} accent={C.orange}/></View>
+          <PlanetStructureView planet={selectedPlanet} />
           <View style={pw.atmo}><Text style={pw.atmoLabel}>ATMOSPHERE</Text><Text style={pw.atmoText}>{selectedPlanet.atmosphere}</Text></View>
           <View style={pw.atmo}><Text style={pw.atmoLabel}>NAME & DISCOVERY</Text><Text style={pw.atmoText}>{selectedPlanet.namedFor} {selectedPlanet.discovery}</Text></View>
           <Text style={[pw.atmoLabel, { marginTop: 12 }]}>MISSIONS & ORGANIZATIONS</Text>
@@ -1807,6 +1167,26 @@ function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, onFocus, on
         </ScrollView>
       )}
 
+      <Text style={[pw.atmoLabel, { marginTop: 12 }]}>DWARF PLANETS</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+        <View style={{ flexDirection:"row", gap:7 }}>
+          {DWARF_PLANETS.map(d => (
+            <Pressable key={d.id} style={[pw.chip, selectedDwarf?.id===d.id&&pw.chipActive]} onPress={()=>onDwarf(d.id)}>
+              <Text style={[pw.chipText, selectedDwarf?.id===d.id&&{color:C.cyan}]}>{d.emoji} {d.name}</Text>
+            </Pressable>
+          ))}
+          <Pressable style={pw.chip} onPress={onComet}>
+            <Text style={pw.chipText}>☄️ Halley</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+
+      <View style={pw.speedRow}>
+        <Text style={pw.speedLabel}>DATE {simDateLabel}  ·  {trueScale ? "TRUE AU" : "COMPACT"}</Text>
+        <Pressable style={[pw.speedBtn, trueScale && pw.speedBtnActive]} onPress={() => setTrueScale(v => !v)}>
+          <Text style={[pw.speedBtnT, trueScale && pw.speedBtnTActive]}>AU</Text>
+        </Pressable>
+      </View>
       <View style={pw.speedRow}>
         <Text style={pw.speedLabel}>SIMULATION SPEED</Text>
         <View style={pw.speedBtns}>
@@ -1817,6 +1197,52 @@ function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, onFocus, on
           ))}
         </View>
       </View>
+    </View>
+  );
+}
+
+
+function GalaxyPanel({ selectedStar, selectedDeep, onWarp }: {
+  selectedStar: typeof STAR_SYSTEMS[number] | null | undefined;
+  selectedDeep: DeepSpaceObject | null;
+  onWarp: (id: string) => void;
+}) {
+  const galaxies = DEEP_SPACE_OBJECTS.filter(o => o.type === "Galaxy");
+  return (
+    <View style={pw.wrap}>
+      <LinearGradient colors={["#1a0830", "#060014"]} style={pw.hero}>
+        <Text style={pw.heroEmoji}>🌀</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={pw.heroName}>{selectedDeep ? selectedDeep.name : selectedStar ? selectedStar.name : "Milky Way"}</Text>
+          <Text style={pw.heroNick}>{(selectedDeep ? selectedDeep.distance : selectedStar ? selectedStar.distance : "phone-scale spiral").toUpperCase()}</Text>
+        </View>
+      </LinearGradient>
+      <View style={pw.factCard}>
+        <Text style={pw.factQuote}>"{selectedDeep ? selectedDeep.facts[0] : selectedStar ? selectedStar.fact : "Pinch or use +/− to zoom. Tap a glowing galaxy disc or a star beacon."}"</Text>
+      </View>
+      <Text style={[pw.atmoLabel, { marginTop: 12 }]}>GALAXIES — TAP THE DISC</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 8 }}>
+        {galaxies.map(g => (
+          <Pressable key={g.id} style={[pw.chip, selectedDeep?.id === g.id && pw.chipActive]} onPress={() => onWarp(g.id)}>
+            <Text style={[pw.chipText, selectedDeep?.id === g.id && { color: C.cyan }]}>{g.name}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={[pw.atmoLabel, { marginTop: 12 }]}>WARP DESTINATIONS</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 8 }}>
+        {STAR_SYSTEMS.map(s => (
+          <Pressable key={s.id} style={[pw.chip, selectedStar?.id === s.id && pw.chipActive]} onPress={() => onWarp(s.id)}>
+            <Text style={[pw.chipText, selectedStar?.id === s.id && { color: C.cyan }]}>{s.name}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={[pw.atmoLabel, { marginTop: 12 }]}>CONSTELLATIONS</Text>
+      {CONSTELLATIONS.slice(0, 6).map(c => (
+        <View key={c.id} style={pw.atmo}>
+          <Text style={pw.atmoLabel}>{c.emoji} {c.name.toUpperCase()} · {c.season}</Text>
+          <Text style={pw.atmoText}>{c.funFact}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -2085,205 +1511,33 @@ function TimelinePanel() {
 }
 
 
-// ─── PLANET INTERNAL STRUCTURE ────────────────────────────────────────────────
-const PLANET_LAYERS: Record<string, Array<{ label: string; color: string; temp: string; depth: string }>> = {
-  mercury: [
-    { label:"Inner Core",   color:"#e87040", temp:"~1,800°C", depth:"0–600 km" },
-    { label:"Outer Core",   color:"#d45520", temp:"~1,000°C", depth:"600–1,800 km" },
-    { label:"Mantle",       color:"#8a4020", temp:"~700°C",   depth:"1,800–2,350 km" },
-    { label:"Crust",        color:"#5a3010", temp:"~450°C",   depth:"2,350–2,440 km" },
-  ],
-  venus: [
-    { label:"Iron Core",    color:"#d45020", temp:"~5,000°C", depth:"0–3,110 km" },
-    { label:"Mantle",       color:"#a06030", temp:"~2,000°C", depth:"3,110–6,051 km" },
-    { label:"Crust",        color:"#c09050", temp:"~465°C",   depth:"surface" },
-  ],
-  earth: [
-    { label:"Inner Core",   color:"#ffbb44", temp:"~5,400°C", depth:"0–1,200 km" },
-    { label:"Outer Core",   color:"#ff8822", temp:"~4,000°C", depth:"1,200–3,400 km" },
-    { label:"Mantle",       color:"#883020", temp:"~2,000°C", depth:"3,400–6,335 km" },
-    { label:"Crust",        color:"#44aa66", temp:"~20°C",    depth:"thin shell" },
-  ],
-  mars: [
-    { label:"Iron Core",    color:"#cc4422", temp:"~1,400°C", depth:"0–1,800 km" },
-    { label:"Silicate Mantle",color:"#883322", temp:"~1,000°C",depth:"1,800–3,370 km" },
-    { label:"Crust",        color:"#bb5533", temp:"−60°C",   depth:"thin shell" },
-  ],
-  jupiter: [
-    { label:"Rocky Core",   color:"#aa6622", temp:"~24,000°C",depth:"0–14,000 km" },
-    { label:"Metallic H₂",  color:"#446699", temp:"~10,000°C",depth:"14,000–50,000 km" },
-    { label:"Liquid H₂",    color:"#6688cc", temp:"~5,000°C", depth:"50,000–71,000 km" },
-    { label:"Atmosphere",   color:"#ccaa66", temp:"−110°C",  depth:"outer layer" },
-  ],
-  saturn: [
-    { label:"Rocky Core",   color:"#aa8844", temp:"~15,000°C",depth:"0–9,000 km" },
-    { label:"Metallic H₂",  color:"#557799", temp:"~7,000°C", depth:"9,000–30,000 km" },
-    { label:"Liquid H₂",    color:"#7799bb", temp:"~3,000°C", depth:"30,000–60,000 km" },
-    { label:"Atmosphere",   color:"#ddbb88", temp:"−140°C",  depth:"outer layer" },
-  ],
-  uranus: [
-    { label:"Rocky Core",   color:"#668899", temp:"~5,000°C", depth:"0–7,500 km" },
-    { label:"Ice Mantle",   color:"#4499bb", temp:"~2,000°C", depth:"7,500–25,000 km" },
-    { label:"Atmosphere",   color:"#88ccdd", temp:"−195°C",  depth:"outer" },
-  ],
-  neptune: [
-    { label:"Rocky Core",   color:"#334466", temp:"~5,400°C", depth:"0–7,000 km" },
-    { label:"Ice Mantle",   color:"#335588", temp:"~2,500°C", depth:"7,000–24,000 km" },
-    { label:"Atmosphere",   color:"#4466aa", temp:"−200°C",  depth:"outer" },
-  ],
-};
+// ─── PLANET INTERNAL STRUCTURE (legend — 3D cutaway is in the sky) ────────────
 function PlanetStructureView({ planet }: { planet: Planet }) {
-  const layers   = PLANET_LAYERS[planet.id] ?? PLANET_LAYERS.earth;
-  const n        = layers.length;
-  const R        = 82; // outer radius px — bigger and more impressive
+  const layers = layersForPlanet(planet.id);
   const [activeLayer, setActiveLayer] = useState<number | null>(null);
-  const pulseAnim  = useRef(new Animated.Value(0)).current;
-  const scanAnim   = useRef(new Animated.Value(-R)).current;
-  const coreGlow   = useRef(new Animated.Value(0.6)).current;
-
-  useEffect(() => {
-    // Core pulsing
-    Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue:1, duration:1800, useNativeDriver:true }),
-      Animated.timing(pulseAnim, { toValue:0, duration:1800, useNativeDriver:true }),
-    ])).start();
-    // Scanning line sweeping across cross-section
-    Animated.loop(Animated.sequence([
-      Animated.timing(scanAnim,  { toValue:R, duration:2400, useNativeDriver:true }),
-      Animated.delay(600),
-      Animated.timing(scanAnim,  { toValue:-R, duration:0, useNativeDriver:true }),
-    ])).start();
-    // Core heat glow
-    Animated.loop(Animated.sequence([
-      Animated.timing(coreGlow, { toValue:1.0, duration:900, useNativeDriver:true }),
-      Animated.timing(coreGlow, { toValue:0.5, duration:900, useNativeDriver:true }),
-    ])).start();
-  }, [pulseAnim, scanAnim, coreGlow, planet.id]);
-
-  const coreScale = pulseAnim.interpolate({ inputRange:[0,1], outputRange:[0.94, 1.06] });
-
   return (
-    <View style={{ marginVertical:12, backgroundColor:"rgba(4,10,30,0.85)", borderRadius:20, padding:16, borderWidth:1, borderColor:"rgba(77,249,255,0.18)" }}>
-      {/* Header */}
-      <View style={{ flexDirection:"row", alignItems:"center", gap:10, marginBottom:14 }}>
-        <View style={{ flex:1 }}>
-          <Text style={{ color:"#4df9ff", fontSize:9, fontWeight:"900", letterSpacing:2, marginBottom:2 }}>🔬 INTERNAL STRUCTURE</Text>
-          <Text style={{ color:"#8ab8d8", fontSize:11 }}>Tap any layer to highlight it</Text>
-        </View>
-        <View style={{ backgroundColor:"rgba(77,249,255,0.1)", borderRadius:10, paddingHorizontal:10, paddingVertical:5, borderWidth:1, borderColor:"rgba(77,249,255,0.25)" }}>
-          <Text style={{ color:"#4df9ff", fontSize:10, fontWeight:"900" }}>{n} layers</Text>
-        </View>
-      </View>
-
-      <View style={{ flexDirection:"row", gap:16, alignItems:"center" }}>
-        {/* 3D Cross-section diagram */}
-        <View style={{ width:R*2+8, height:R*2+8 }}>
-          <View style={{ width:R*2+8, height:R*2+8, position:"relative" }}>
-            {/* Shadow/depth ring underneath */}
-            <View style={{
-              position:"absolute", left:-4, top:-4, right:-4, bottom:-4,
-              borderRadius:(R+4), backgroundColor:"rgba(0,0,0,0.5)",
-            }}/>
-            {/* Layer concentric circles — outermost first */}
-            {[...layers].reverse().map((layer, ri) => {
-              const i = n - 1 - ri; // real index
-              const frac = (n - i) / n;
-              const d    = frac * (R * 2);
-              const off  = (R * 2 - d) / 2 + 4;
-              const isActive = activeLayer === i;
-              return (
-                <Pressable
-                  key={layer.label}
-                  onPress={() => setActiveLayer(activeLayer === i ? null : i)}
-                  style={{
-                    position:"absolute", left:off, top:off,
-                    width:d, height:d, borderRadius:d/2,
-                    backgroundColor: layer.color,
-                    // 3D depth: darker at edge, brighter toward center
-                    borderWidth: isActive ? 2 : 0,
-                    borderColor: isActive ? "#ffffff" : "transparent",
-                    shadowColor: layer.color,
-                    shadowOpacity: isActive ? 0.9 : 0.4,
-                    shadowRadius: isActive ? 12 : 4,
-                    elevation: isActive ? 8 : 2,
-                    opacity: activeLayer !== null && !isActive ? 0.45 : 1,
-                  }}
-                />
-              );
-            })}
-            {/* Core pulse animation */}
-            <Animated.View style={{
-              position:"absolute",
-              left: 4 + R - R*(1/n),
-              top:  4 + R - R*(1/n),
-              width:  R*(2/n),
-              height: R*(2/n),
-              borderRadius: R/n,
-              backgroundColor: layers[0].color,
-              transform:[{ scale: coreScale }],
-              opacity: coreGlow,
-            }}/>
-            {/* Scanning line overlay */}
-            <Animated.View style={{
-              position:"absolute", top:4, bottom:4, width:1.5,
-              left: R + 4,
-              transform:[{ translateX: scanAnim }],
-              backgroundColor:"rgba(77,249,255,0.5)",
-              zIndex:10,
-            }}/>
-            {/* Center dot */}
-            <View style={{
-              position:"absolute", left: R+4-3, top: R+4-3,
-              width:6, height:6, borderRadius:3, backgroundColor:"#ffffff",
-              zIndex:11,
-            }}/>
-          </View>
-        </View>
-
-        {/* Legend */}
-        <View style={{ flex:1, gap:6 }}>
-          {layers.map((layer, i) => {
-            const isActive = activeLayer === i;
-            return (
-              <Pressable
-                key={layer.label}
-                onPress={() => setActiveLayer(activeLayer === i ? null : i)}
-                style={{
-                  flexDirection:"row", alignItems:"center", gap:8,
-                  padding:8, borderRadius:12,
-                  backgroundColor: isActive ? `${layer.color}22` : "rgba(255,255,255,0.03)",
-                  borderWidth:1,
-                  borderColor: isActive ? layer.color : "rgba(255,255,255,0.06)",
-                }}
-              >
-                <View style={{ width:14, height:14, borderRadius:7, backgroundColor:layer.color, shadowColor:layer.color, shadowOpacity:0.8, shadowRadius:4 }}/>
-                <View style={{ flex:1 }}>
-                  <Text style={{ color: isActive ? "#ffffff" : "#cce0ff", fontSize:11, fontWeight:"900" }}>{layer.label}</Text>
-                  <Text style={{ color:"rgba(140,190,220,0.65)", fontSize:9, marginTop:1 }}>{layer.temp}</Text>
-                </View>
-                <Text style={{ color:"rgba(140,190,220,0.5)", fontSize:8.5 }}>{layer.depth}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* Active layer detail card */}
-      {activeLayer !== null && (
-        <View style={{ marginTop:12, padding:12, borderRadius:14, backgroundColor:`${layers[activeLayer].color}18`, borderWidth:1, borderColor:`${layers[activeLayer].color}55` }}>
-          <Text style={{ color:"#ffffff", fontSize:13, fontWeight:"900", marginBottom:4 }}>{layers[activeLayer].label}</Text>
-          <View style={{ flexDirection:"row", gap:20 }}>
-            <View>
-              <Text style={{ color:"rgba(160,210,240,0.6)", fontSize:8.5, fontWeight:"900", letterSpacing:1 }}>TEMPERATURE</Text>
-              <Text style={{ color:"#4df9ff", fontSize:14, fontWeight:"900", marginTop:2 }}>{layers[activeLayer].temp}</Text>
+    <View style={{ marginVertical: 8, backgroundColor: "rgba(4,10,30,0.85)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(77,249,255,0.18)" }}>
+      <Text style={{ color: "#4df9ff", fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 8 }}>🔬 LAYERS — TAP · 3D IN THE SKY</Text>
+      {layers.map((layer, i) => {
+        const isActive = activeLayer === i;
+        return (
+          <Pressable
+            key={layer.label}
+            onPress={() => setActiveLayer(activeLayer === i ? null : i)}
+            style={{
+              flexDirection: "row", alignItems: "center", gap: 8, padding: 7, borderRadius: 10, marginBottom: 5,
+              backgroundColor: isActive ? `${layer.color}22` : "rgba(255,255,255,0.03)",
+              borderWidth: 1, borderColor: isActive ? layer.color : "rgba(255,255,255,0.06)",
+            }}
+          >
+            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: layer.color }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: isActive ? "#ffffff" : "#cce0ff", fontSize: 11, fontWeight: "900" }}>{layer.label}</Text>
+              <Text style={{ color: "rgba(140,190,220,0.65)", fontSize: 9 }}>{layer.temp} · {layer.depth}</Text>
             </View>
-            <View>
-              <Text style={{ color:"rgba(160,210,240,0.6)", fontSize:8.5, fontWeight:"900", letterSpacing:1 }}>DEPTH</Text>
-              <Text style={{ color:"#ffd166", fontSize:14, fontWeight:"900", marginTop:2 }}>{layers[activeLayer].depth}</Text>
-            </View>
-          </View>
-        </View>
-      )}
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -2524,6 +1778,7 @@ function LabPanel({ planet, inputs, setInputs, outcome, activeExperimentId, setA
         <View><Text style={lab.title}>🧪  SPACE LAB</Text><Text style={lab.sub}>What happens if…?</Text></View>
         <Pressable onPress={reset} style={lab.resetBtn}><Text style={lab.resetText}>Reset</Text></Pressable>
       </View>
+      <PlanetStructureView planet={planet} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:14 }}>
         <View style={{ flexDirection:"row", gap:9 }}>
           {EXPERIMENTS.map(exp=>(
@@ -2697,7 +1952,12 @@ function CosmoPanel({ onActivateExperiment, onSection, onSelectAgency, onAction 
 function QuizPanel({ exploredIds }: { exploredIds: string[] }) {
   const qs = useMemo(() => {
     const unlocked = QUIZ_QUESTIONS.filter(q => !q.objectId || exploredIds.includes(q.objectId));
-    return unlocked.slice(0, 10);
+    const generals = unlocked.filter(q => !q.objectId);
+    const harvested = unlocked.filter(q => q.objectId);
+    const mixed = [...generals, ...harvested];
+    // Stable shuffle from ids so a session is mixed, not always the first 15 in the file.
+    mixed.sort((a, b) => (a.id.charCodeAt(1) + a.id.length) - (b.id.charCodeAt(1) + b.id.length));
+    return mixed.slice(0, 15);
   }, [exploredIds]);
   const [qi,setQi]=useState(0);const [sel,setSel]=useState<number|null>(null);
   const [score,setScore]=useState(0);const [streak,setStreak]=useState(0);const [done,setDone]=useState(false);
@@ -2715,7 +1975,7 @@ function QuizPanel({ exploredIds }: { exploredIds: string[] }) {
     );
   }
 
-  if(done)return(<View style={qz.done}><Text style={qz.doneEmoji}>🏆</Text><Text style={qz.doneTitle}>Quiz Complete!</Text><Text style={qz.doneScore}>{score}/{qs.length}</Text><Text style={qz.doneSub}>{score>=8?"Space genius!":score>=5?"Great explorer!":"Keep exploring!"}</Text><Pressable style={qz.restartBtn} onPress={restart}><Text style={qz.restartText}>Try Again</Text></Pressable></View>);
+  if(done)return(<View style={qz.done}><Text style={qz.doneEmoji}>🏆</Text><Text style={qz.doneTitle}>Quiz Complete!</Text><Text style={qz.doneScore}>{score}/{qs.length}</Text><Text style={qz.doneSub}>{score>=12?"Space genius!":score>=8?"Great explorer!":"Keep exploring!"}</Text><Pressable style={qz.restartBtn} onPress={restart}><Text style={qz.restartText}>Try Again</Text></Pressable></View>);
   if(!q)return null;
 
   return (
@@ -2771,9 +2031,24 @@ const ui = StyleSheet.create({
   glassBtn: { width:44,height:44,borderRadius:13,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(8,16,36,0.90)",borderWidth:1,borderColor:"rgba(140,200,255,0.22)" },
   glassBtnSm: { width:36,height:36,borderRadius:10 },
   glassBtnText: { color:"#eef5ff",fontSize:18 },
-  floatingCard: { position:"absolute",top:90,left:14,right:14,backgroundColor:"rgba(3,6,18,0.98)",borderRadius:20,borderWidth:1,borderColor:"rgba(77,249,255,0.42)",overflow:"hidden" },
-  fcGradHeader: { padding:15,borderBottomWidth:1,borderBottomColor:"rgba(255,255,255,0.09)" },
-  fcBody: { padding:15 },
+  zoomHud: {
+    position: "absolute",
+    bottom: 96,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: "rgba(3,8,22,0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(77,249,255,0.28)",
+  },
+  zoomHudVal: { color: "#4df9ff", fontSize: 13, fontWeight: "900", minWidth: 28, textAlign: "center" },
+  floatingCard: { position:"absolute",top:90,left:14,right:14,maxHeight:220,backgroundColor:"rgba(3,6,18,0.98)",borderRadius:20,borderWidth:1,borderColor:"rgba(77,249,255,0.42)",overflow:"hidden" },
+  fcGradHeader: { padding:12,borderBottomWidth:1,borderBottomColor:"rgba(255,255,255,0.09)" },
+  fcBody: { padding:12 },
   fcRow: { flexDirection:"row",alignItems:"center",gap:12 },
   fcEmoji: { fontSize:34 },
   fcName: { color:"#f0f6ff",fontSize:18,fontWeight:"900" },

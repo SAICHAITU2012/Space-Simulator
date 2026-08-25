@@ -88,6 +88,24 @@ export const DWARF_PLANETS: DwarfPlanet[] = [
       "Surface ices include methane and may be as reflective as fresh snow.",
     ],
   },
+  {
+    id: "pluto",
+    name: "Pluto",
+    nickname: "The Heart World",
+    emoji: "🤎",
+    color: "#c8a078",
+    visualRadius: 0.36,
+    orbitRadius: 44,
+    orbitSpeed: 0.033,
+    rotationSpeed: -0.35,
+    textureKey: "pluto",
+    fact: "Pluto is a Kuiper Belt dwarf with a heart-shaped nitrogen glacier and a surprisingly active geology.",
+    funFacts: [
+      "New Horizons found mountains of water ice and a hazy blue atmosphere.",
+      "Charon is so large that Pluto–Charon is often called a binary system.",
+      "Its 248-year orbit is tilted 17° and crosses inside Neptune's path.",
+    ],
+  },
 ];
 
 export const DWARF_BY_ID: Record<string, DwarfPlanet> = Object.fromEntries(
