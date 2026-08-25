@@ -123,6 +123,22 @@ export default function App() {
   const [paused,            setPaused]            = useState(false);
   const [speed,             setSpeed]             = useState(1);
   const [motionEnabled,     setMotionEnabled]     = useState(false);
+
+  // Inject black background on web so the canvas looks like real space
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      document.body.style.background = "#000010";
+      document.documentElement.style.background = "#000010";
+      // Also style the canvas and root element
+      const style = document.createElement("style");
+      style.textContent = `
+        body, html, #root { background: #000010 !important; }
+        canvas { background: #000010 !important; display: block; }
+        * { box-sizing: border-box; }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
   const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | null>(null);
   const [selectedMoonId,    setSelectedMoonId]    = useState<string | null>(null);
   const [selectedDwarfId,   setSelectedDwarfId]   = useState<string | null>(null);
@@ -447,7 +463,6 @@ export default function App() {
             </View>
             <View style={ui.topRight}>
               {!showEarthHub && <GlassBtn label={paused ? "▶" : "⏸"} onPress={() => setPaused(v => !v)} />}
-              <GlassBtn label={motionEnabled ? "🧭" : "👆"} onPress={() => setMotionEnabled(v => !v)} />
               <GlassBtn label="i" onPress={() => setShowCredits(v => !v)} />
               <GlassBtn label="⌂" onPress={() => {
                 camRef.current = showEarthHub ? { yaw: 0.2, pitch: 0.5, zoom: 14 } : { yaw: 0.18, pitch: 0.36, zoom: 38 };
@@ -637,7 +652,13 @@ export default function App() {
           </View>
 
           {/* Content */}
-          <ScrollView style={ui.sheetContent} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            style={ui.sheetContent}
+            contentContainerStyle={{ flexGrow: 1 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
+          >
             {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} selectedDeep={selectedDeep} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} onDeep={id => onDeepTapped(id)} speed={speed} setSpeed={setSpeed} zoomLevel={zoomLevel} zoomIn={() => setCameraZoom(camRef.current.zoom - 8)} zoomOut={() => setCameraZoom(camRef.current.zoom + 12)} onLearnLink={(url) => Linking.openURL(url).catch(() => undefined)} />}
             {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { onSatTapped(id); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
             {section === "agencies" && <AgenciesPanel selectedAgencyId={selectedAgencyId} onSelect={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} />}
@@ -1140,86 +1161,70 @@ function ObjectTapDetector({
 
 // ── Sun — 6-layer animated corona + solar shimmer ────────────────────────────
 function Sun() {
-  const surf = useRef<THREE.Mesh>(null);
-  const l1   = useRef<THREE.Mesh>(null);
-  const l2   = useRef<THREE.Mesh>(null);
-  const l3   = useRef<THREE.Mesh>(null);
-  const l4   = useRef<THREE.Mesh>(null);
-  const l5   = useRef<THREE.Mesh>(null);
+  const surf    = useRef<THREE.Mesh>(null);
+  const l1      = useRef<THREE.Mesh>(null);
+  const l2      = useRef<THREE.Mesh>(null);
+  const l3      = useRef<THREE.Mesh>(null);
   const sunCore = useRef<THREE.Mesh>(null);
-  const sunMap = useBodyTexture("sun");
+  const sunMap  = useBodyTexture("sun");
 
   useFrame(({ clock }) => {
     const t  = clock.getElapsedTime();
-    // Animated corona — each layer pulses independently (simulates solar wind)
     const s1 = Math.sin(t * 1.80);
     const s2 = Math.sin(t * 1.15 + 1.1);
     const s3 = Math.sin(t * 0.72 + 2.3);
-    const s4 = Math.sin(t * 0.44 + 0.7);
-    const s5 = Math.sin(t * 0.28 + 3.1);
 
-    // Solar surface shimmer — rotate slowly and vary color intensity
     if (sunCore.current) {
       sunCore.current.rotation.y += 0.0008;
       sunCore.current.rotation.z += 0.0003;
       const mat = sunCore.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 1.2 + s1 * 0.25;
+      mat.emissiveIntensity = 1.0 + s1 * 0.18;
     }
-    if (surf.current) {
-      (surf.current.material as THREE.MeshBasicMaterial).opacity = 0.55 + s1 * 0.15;
-      surf.current.rotation.y += 0.0012;
-    }
-    if (l1.current) (l1.current.material as THREE.MeshBasicMaterial).opacity = 0.32 + s1 * 0.10;
-    if (l2.current) (l2.current.material as THREE.MeshBasicMaterial).opacity = 0.14 + s2 * 0.06;
-    if (l3.current) (l3.current.material as THREE.MeshBasicMaterial).opacity = 0.07 + s3 * 0.03;
-    if (l4.current) (l4.current.material as THREE.MeshBasicMaterial).opacity = 0.035 + s4 * 0.015;
-    if (l5.current) (l5.current.material as THREE.MeshBasicMaterial).opacity = 0.012 + s5 * 0.006;
+    if (surf.current)
+      (surf.current.material as THREE.MeshBasicMaterial).opacity = 0.38 + s1 * 0.08;
+    if (l1.current)
+      (l1.current.material as THREE.MeshBasicMaterial).opacity = 0.14 + s2 * 0.04;
+    if (l2.current)
+      (l2.current.material as THREE.MeshBasicMaterial).opacity = 0.055 + s3 * 0.018;
+    if (l3.current)
+      (l3.current.material as THREE.MeshBasicMaterial).opacity = 0.018 + s1 * 0.006;
   });
 
   return (
     <group>
-      {/* Core — PBR emissive for realistic glowing ball */}
+      {/* Core — PBR emissive sun surface */}
       <mesh ref={sunCore}>
         <sphereGeometry args={[3.2, 48, 48]} />
         <meshStandardMaterial
+          key={sunMap?.uuid ?? "nomap_sun"}
           map={sunMap ?? undefined}
-          color={sunMap ? "#ffffff" : "#fff8d0"}
-          emissive="#ffb200"
+          color={sunMap ? "#ffffff" : "#fff4a0"}
+          emissive="#ff9200"
           emissiveMap={sunMap ?? undefined}
-          emissiveIntensity={1.4}
-          roughness={0.85}
+          emissiveIntensity={1.0}
+          roughness={0.9}
           metalness={0.0}
         />
       </mesh>
-      {/* Surface convection shimmer */}
+      {/* Surface shimmer */}
       <mesh ref={surf}>
-        <sphereGeometry args={[3.26, 48, 48]} />
-        <meshBasicMaterial color="#ffd500" transparent opacity={0.55} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <sphereGeometry args={[3.28, 32, 32]} />
+        <meshBasicMaterial color="#ffcc00" transparent opacity={0.38} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {/* Layer 1 — inner corona (deep yellow-orange) */}
+      {/* Inner corona — tight and golden */}
       <mesh ref={l1}>
-        <sphereGeometry args={[4.2, 32, 32]} />
-        <meshBasicMaterial color="#ffaa00" transparent opacity={0.32} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <sphereGeometry args={[4.0, 24, 24]} />
+        <meshBasicMaterial color="#ff9900" transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {/* Layer 2 — mid corona (orange-red transition) */}
+      {/* Mid corona — subtle red-orange */}
       <mesh ref={l2}>
-        <sphereGeometry args={[5.6, 32, 32]} />
-        <meshBasicMaterial color="#ff6600" transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <sphereGeometry args={[5.2, 24, 24]} />
+        <meshBasicMaterial color="#ff5500" transparent opacity={0.055} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {/* Layer 3 — outer corona (red) */}
+      {/* Outer halo — very faint */}
       <mesh ref={l3}>
-        <sphereGeometry args={[7.2, 24, 24]} />
-        <meshBasicMaterial color="#ff3300" transparent opacity={0.07} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      {/* Layer 4 — wide solar wind halo */}
-      <mesh ref={l4}>
-        <sphereGeometry args={[10.0, 24, 24]} />
-        <meshBasicMaterial color="#ff2200" transparent opacity={0.035} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      {/* Layer 5 — mega far halo (lens flare simulation) */}
-      <mesh ref={l5}>
-        <sphereGeometry args={[14.0, 16, 16]} />
-        <meshBasicMaterial color="#ff8800" transparent opacity={0.012} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <sphereGeometry args={[7.0, 16, 16]} />
+        <meshBasicMaterial color="#ff3300" transparent opacity={0.018} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
     </group>
   );
@@ -2018,42 +2023,157 @@ const PLANET_LAYERS: Record<string, Array<{ label: string; color: string; temp: 
   ],
 };
 function PlanetStructureView({ planet }: { planet: Planet }) {
-  const layers = PLANET_LAYERS[planet.id] ?? PLANET_LAYERS.earth;
-  const n = layers.length;
-  const R = 52; // outer radius px
+  const layers   = PLANET_LAYERS[planet.id] ?? PLANET_LAYERS.earth;
+  const n        = layers.length;
+  const R        = 82; // outer radius px — bigger and more impressive
+  const [activeLayer, setActiveLayer] = useState<number | null>(null);
+  const pulseAnim  = useRef(new Animated.Value(0)).current;
+  const scanAnim   = useRef(new Animated.Value(-R)).current;
+  const coreGlow   = useRef(new Animated.Value(0.6)).current;
+
+  useEffect(() => {
+    // Core pulsing
+    Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue:1, duration:1800, useNativeDriver:true }),
+      Animated.timing(pulseAnim, { toValue:0, duration:1800, useNativeDriver:true }),
+    ])).start();
+    // Scanning line sweeping across cross-section
+    Animated.loop(Animated.sequence([
+      Animated.timing(scanAnim,  { toValue:R, duration:2400, useNativeDriver:true }),
+      Animated.delay(600),
+      Animated.timing(scanAnim,  { toValue:-R, duration:0, useNativeDriver:true }),
+    ])).start();
+    // Core heat glow
+    Animated.loop(Animated.sequence([
+      Animated.timing(coreGlow, { toValue:1.0, duration:900, useNativeDriver:true }),
+      Animated.timing(coreGlow, { toValue:0.5, duration:900, useNativeDriver:true }),
+    ])).start();
+  }, [pulseAnim, scanAnim, coreGlow, planet.id]);
+
+  const coreScale = pulseAnim.interpolate({ inputRange:[0,1], outputRange:[0.94, 1.06] });
+
   return (
-    <View style={{ marginVertical:10 }}>
-      <Text style={{ color:"rgba(160,210,240,0.7)", fontSize:9, fontWeight:"900", letterSpacing:1.5, marginBottom:8 }}>INTERNAL STRUCTURE</Text>
-      <View style={{ flexDirection:"row", alignItems:"center", gap:12 }}>
-        {/* Concentric ring diagram */}
-        <View style={{ width:R*2+4, height:R*2+4, position:"relative" }}>
+    <View style={{ marginVertical:12, backgroundColor:"rgba(4,10,30,0.85)", borderRadius:20, padding:16, borderWidth:1, borderColor:"rgba(77,249,255,0.18)" }}>
+      {/* Header */}
+      <View style={{ flexDirection:"row", alignItems:"center", gap:10, marginBottom:14 }}>
+        <View style={{ flex:1 }}>
+          <Text style={{ color:"#4df9ff", fontSize:9, fontWeight:"900", letterSpacing:2, marginBottom:2 }}>🔬 INTERNAL STRUCTURE</Text>
+          <Text style={{ color:"#8ab8d8", fontSize:11 }}>Tap any layer to highlight it</Text>
+        </View>
+        <View style={{ backgroundColor:"rgba(77,249,255,0.1)", borderRadius:10, paddingHorizontal:10, paddingVertical:5, borderWidth:1, borderColor:"rgba(77,249,255,0.25)" }}>
+          <Text style={{ color:"#4df9ff", fontSize:10, fontWeight:"900" }}>{n} layers</Text>
+        </View>
+      </View>
+
+      <View style={{ flexDirection:"row", gap:16, alignItems:"center" }}>
+        {/* 3D Cross-section diagram */}
+        <View style={{ width:R*2+8, height:R*2+8 }}>
+          <View style={{ width:R*2+8, height:R*2+8, position:"relative" }}>
+            {/* Shadow/depth ring underneath */}
+            <View style={{
+              position:"absolute", left:-4, top:-4, right:-4, bottom:-4,
+              borderRadius:(R+4), backgroundColor:"rgba(0,0,0,0.5)",
+            }}/>
+            {/* Layer concentric circles — outermost first */}
+            {[...layers].reverse().map((layer, ri) => {
+              const i = n - 1 - ri; // real index
+              const frac = (n - i) / n;
+              const d    = frac * (R * 2);
+              const off  = (R * 2 - d) / 2 + 4;
+              const isActive = activeLayer === i;
+              return (
+                <Pressable
+                  key={layer.label}
+                  onPress={() => setActiveLayer(activeLayer === i ? null : i)}
+                  style={{
+                    position:"absolute", left:off, top:off,
+                    width:d, height:d, borderRadius:d/2,
+                    backgroundColor: layer.color,
+                    // 3D depth: darker at edge, brighter toward center
+                    borderWidth: isActive ? 2 : 0,
+                    borderColor: isActive ? "#ffffff" : "transparent",
+                    shadowColor: layer.color,
+                    shadowOpacity: isActive ? 0.9 : 0.4,
+                    shadowRadius: isActive ? 12 : 4,
+                    elevation: isActive ? 8 : 2,
+                    opacity: activeLayer !== null && !isActive ? 0.45 : 1,
+                  }}
+                />
+              );
+            })}
+            {/* Core pulse animation */}
+            <Animated.View style={{
+              position:"absolute",
+              left: 4 + R - R*(1/n),
+              top:  4 + R - R*(1/n),
+              width:  R*(2/n),
+              height: R*(2/n),
+              borderRadius: R/n,
+              backgroundColor: layers[0].color,
+              transform:[{ scale: coreScale }],
+              opacity: coreGlow,
+            }}/>
+            {/* Scanning line overlay */}
+            <Animated.View style={{
+              position:"absolute", top:4, bottom:4, width:1.5,
+              left: R + 4,
+              transform:[{ translateX: scanAnim }],
+              backgroundColor:"rgba(77,249,255,0.5)",
+              zIndex:10,
+            }}/>
+            {/* Center dot */}
+            <View style={{
+              position:"absolute", left: R+4-3, top: R+4-3,
+              width:6, height:6, borderRadius:3, backgroundColor:"#ffffff",
+              zIndex:11,
+            }}/>
+          </View>
+        </View>
+
+        {/* Legend */}
+        <View style={{ flex:1, gap:6 }}>
           {layers.map((layer, i) => {
-            const frac = (n - i) / n;
-            const d = frac * (R * 2 + 4);
-            const offset = (R * 2 + 4 - d) / 2;
+            const isActive = activeLayer === i;
             return (
-              <View key={layer.label} style={{
-                position:"absolute", left:offset, top:offset,
-                width:d, height:d, borderRadius:d/2,
-                backgroundColor: layer.color,
-                opacity: 0.85 + i * 0.03,
-              }}/>
+              <Pressable
+                key={layer.label}
+                onPress={() => setActiveLayer(activeLayer === i ? null : i)}
+                style={{
+                  flexDirection:"row", alignItems:"center", gap:8,
+                  padding:8, borderRadius:12,
+                  backgroundColor: isActive ? `${layer.color}22` : "rgba(255,255,255,0.03)",
+                  borderWidth:1,
+                  borderColor: isActive ? layer.color : "rgba(255,255,255,0.06)",
+                }}
+              >
+                <View style={{ width:14, height:14, borderRadius:7, backgroundColor:layer.color, shadowColor:layer.color, shadowOpacity:0.8, shadowRadius:4 }}/>
+                <View style={{ flex:1 }}>
+                  <Text style={{ color: isActive ? "#ffffff" : "#cce0ff", fontSize:11, fontWeight:"900" }}>{layer.label}</Text>
+                  <Text style={{ color:"rgba(140,190,220,0.65)", fontSize:9, marginTop:1 }}>{layer.temp}</Text>
+                </View>
+                <Text style={{ color:"rgba(140,190,220,0.5)", fontSize:8.5 }}>{layer.depth}</Text>
+              </Pressable>
             );
           })}
         </View>
-        {/* Legend */}
-        <View style={{ flex:1, gap:4 }}>
-          {layers.map((layer) => (
-            <View key={layer.label} style={{ flexDirection:"row", alignItems:"center", gap:6 }}>
-              <View style={{ width:8, height:8, borderRadius:4, backgroundColor:layer.color }}/>
-              <View style={{ flex:1 }}>
-                <Text style={{ color:"#eef5ff", fontSize:10, fontWeight:"800" }}>{layer.label}</Text>
-                <Text style={{ color:"rgba(140,190,220,0.65)", fontSize:8.5 }}>{layer.temp} · {layer.depth}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
       </View>
+
+      {/* Active layer detail card */}
+      {activeLayer !== null && (
+        <View style={{ marginTop:12, padding:12, borderRadius:14, backgroundColor:`${layers[activeLayer].color}18`, borderWidth:1, borderColor:`${layers[activeLayer].color}55` }}>
+          <Text style={{ color:"#ffffff", fontSize:13, fontWeight:"900", marginBottom:4 }}>{layers[activeLayer].label}</Text>
+          <View style={{ flexDirection:"row", gap:20 }}>
+            <View>
+              <Text style={{ color:"rgba(160,210,240,0.6)", fontSize:8.5, fontWeight:"900", letterSpacing:1 }}>TEMPERATURE</Text>
+              <Text style={{ color:"#4df9ff", fontSize:14, fontWeight:"900", marginTop:2 }}>{layers[activeLayer].temp}</Text>
+            </View>
+            <View>
+              <Text style={{ color:"rgba(160,210,240,0.6)", fontSize:8.5, fontWeight:"900", letterSpacing:1 }}>DEPTH</Text>
+              <Text style={{ color:"#ffd166", fontSize:14, fontWeight:"900", marginTop:2 }}>{layers[activeLayer].depth}</Text>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -2590,7 +2710,7 @@ const ui = StyleSheet.create({
     position:"absolute", bottom:3, left:"50%", marginLeft:-3,
     width:6, height:6, borderRadius:3, backgroundColor:"#4df9ff",
   },
-  sheetContent: { flex:1 },
+  sheetContent: { flex:1, minHeight: 0 },
 });
 
 const hs = StyleSheet.create({
