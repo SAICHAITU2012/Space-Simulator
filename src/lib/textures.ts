@@ -51,28 +51,52 @@ function configureMap(tex: THREE.Texture) {
   return tex;
 }
 
-/** Resolve the URI string for a given texture source module. */
-async function resolveUri(key: TextureKey): Promise<string | null> {
-  const src = TEXTURE_SOURCES[key] as unknown;
-
-  if (Platform.OS === "web") {
-    // Metro bundler resolves require() of image assets to a URL string on web.
-    if (typeof src === "string" && src.length > 0) return src;
-    // Object with uri (some bundler configs)
-    if (src && typeof src === "object" && "uri" in (src as object)) {
-      return (src as { uri: string }).uri;
-    }
-    // Number fallback: expo-asset should resolve it to an absolute URL even on web
-  }
-
-  // Native (and web number-module fallback): use expo-asset
+/** Resolve URL using expo-asset (works on both web and native). */
+async function resolveUrl(key: TextureKey): Promise<string | null> {
   try {
     const asset = Asset.fromModule(TEXTURE_SOURCES[key]);
     await asset.downloadAsync();
-    return asset.localUri ?? asset.uri ?? null;
-  } catch {
+    // web:    localUri=null, uri="http://localhost:8081/assets/..."
+    // native: localUri="file://...", uri=fallback
+    const url = asset.localUri ?? asset.uri ?? null;
+    if (!url) console.warn(`[textures] no URL for "${key}"`, asset);
+    else      console.log(`[textures] resolved "${key}" → ${url}`);
+    return url;
+  } catch (e) {
+    console.warn(`[textures] resolveUrl failed "${key}":`, e);
     return null;
   }
+}
+
+/** Web: create THREE.Texture via browser HTMLImageElement — always works in WebGL. */
+async function loadViaImage(url: string, key: TextureKey): Promise<THREE.Texture> {
+  return new Promise((resolve, reject) => {
+    const img = document.createElement("img");
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const tex = new THREE.Texture(img);
+      configureMap(tex);
+      console.log(`[textures] ✓ "${key}" loaded via Image (${img.naturalWidth}×${img.naturalHeight})`);
+      resolve(tex);
+    };
+    img.onerror = (e) => {
+      console.warn(`[textures] ✗ Image failed "${key}" (${url}):`, e);
+      reject(e);
+    };
+    img.src = url;
+  });
+}
+
+/** Native: load via THREE.TextureLoader. */
+async function loadViaThree(url: string, key: TextureKey): Promise<THREE.Texture> {
+  return new Promise((resolve, reject) => {
+    new THREE.TextureLoader().load(
+      url,
+      (tex) => { configureMap(tex); console.log(`[textures] ✓ "${key}" via THREE`); resolve(tex); },
+      undefined,
+      (err) => { console.warn(`[textures] ✗ THREE failed "${key}":`, err); reject(err); }
+    );
+  });
 }
 
 export async function loadBodyTexture(key: TextureKey): Promise<THREE.Texture | null> {
@@ -82,19 +106,13 @@ export async function loadBodyTexture(key: TextureKey): Promise<THREE.Texture | 
 
   const job = (async () => {
     try {
-      const uri = await resolveUri(key);
-      if (!uri) {
-        console.warn(`[textures] no URI for "${key}"`);
-        cache.set(key, null);
-        return null;
-      }
-      const tex = await new Promise<THREE.Texture>((resolve, reject) => {
-        new THREE.TextureLoader().load(uri, resolve, undefined, (err) => {
-          console.warn(`[textures] failed "${key}" (${uri}):`, err);
-          reject(err);
-        });
-      });
-      configureMap(tex);
+      const url = await resolveUrl(key);
+      if (!url) { cache.set(key, null); return null; }
+
+      const tex = Platform.OS === "web"
+        ? await loadViaImage(url, key)   // browser HTMLImageElement path
+        : await loadViaThree(url, key);  // expo-gl TextureLoader path
+
       cache.set(key, tex);
       return tex;
     } catch {
@@ -127,4 +145,3 @@ export function useBodyTexture(key: TextureKey | undefined): THREE.Texture | nul
 
 export const TEXTURE_CREDIT =
   "Planet maps: Solar System Scope (solarsystemscope.com/textures), CC BY 4.0. Based on NASA imagery.";
-

@@ -1388,6 +1388,7 @@ function OrbitingPlanet({
         <mesh ref={planetRef}>
           <sphereGeometry args={[vR, 64, 64]} />
           <meshStandardMaterial
+            key={map?.uuid ?? "nomap_" + planet.id}
             map={map ?? undefined}
             color={map ? "#ffffff" : planet.color}
             roughness={planet.id === "earth" ? 0.52 : planet.id === "mercury" ? 0.92 : planet.id === "venus" ? 0.72 : 0.76}
