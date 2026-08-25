@@ -24,6 +24,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Platform,
   PanResponder,
   Pressable,
   SafeAreaView,
@@ -32,7 +33,9 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Linking,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { Canvas, useFrame, useThree } from "@react-three/fiber/native";
 import { Gyroscope } from "expo-sensors";
@@ -52,6 +55,7 @@ import {
 import { TIMELINE } from "./src/data/timeline";
 import { MOONS, MOON_BY_ID, MOONS_BY_PLANET, Moon } from "./src/data/moons";
 import { DWARF_PLANETS, DWARF_BY_ID, DwarfPlanet } from "./src/data/dwarfs";
+import { DEEP_SPACE_OBJECTS, DEEP_SPACE_BY_ID, DeepSpaceObject } from "./src/data/deepSpace";
 import { PLANET_TEXTURE_KEY, TEXTURE_CREDIT, useBodyTexture } from "./src/lib/textures";
 import { askCosmo, CosmoAction } from "./src/lib/cosmo";
 
@@ -77,31 +81,40 @@ const SECTIONS: Array<{ id: Section; label: string; emoji: string }> = [
   { id: "quiz",      label: "Quiz",      emoji: "🎯" },
 ];
 
-const { width: SW, height: SH } = Dimensions.get("window");
+const initialWindow = Dimensions.get("window");
+const SW = initialWindow.width;
+const SH = initialWindow.height;
+let screenW = initialWindow.width;
+let screenH = initialWindow.height;
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:         "#030611",
-  panel:      "rgba(2,6,18,0.97)",
-  border:     "rgba(60,120,240,0.18)",
-  borderGlow: "rgba(77,249,255,0.45)",
+  bg:         "#01020a",
+  panel:      "rgba(3,6,18,0.97)",
+  panelSoft:  "rgba(10,20,44,0.80)",
+  border:     "rgba(110,165,255,0.15)",
+  borderGlow: "rgba(77,249,255,0.52)",
   cyan:       "#4df9ff",
-  violet:     "#9b4dff",
-  gold:       "#ffc845",
-  green:      "#4dffb4",
-  red:        "#ff4d6d",
-  orange:     "#ff8c1a",
-  text:       "#e8f4ff",
-  textSub:    "#5c8db5",
-  textMuted:  "#243850",
-  earthBlue:  "#1a6dff",
+  violet:     "#b58cff",
+  gold:       "#ffd166",
+  green:      "#4dffc3",
+  red:        "#ff5580",
+  orange:     "#ffac5f",
+  text:       "#eef5ff",
+  textSub:    "#8ab8d8",
+  textMuted:  "#4d6e8a",
+  ink:        "#060d1e",
+  earthBlue:  "#3c82ff",
 };
 
 const PANEL_PEEK = 88;
-const PANEL_OPEN = SH * 0.60;
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const { width: viewW, height: viewH } = useWindowDimensions();
+  const isLandscape = viewW > viewH;
+  const panelOpen = isLandscape ? viewH * 0.78 : viewH * 0.60;
+  const panelPeek = isLandscape ? 74 : PANEL_PEEK;
   const [entered,           setEntered]           = useState(false);
   const [section,           setSection]           = useState<Section>("universe");
   const [selectedPlanetId,  setSelectedPlanetId]  = useState("earth");
@@ -113,6 +126,8 @@ export default function App() {
   const [floatingCard,      setFloatingCard]      = useState<"planet" | "satellite" | "moon" | "dwarf" | null>(null);
   const [selectedMoonId,    setSelectedMoonId]    = useState<string | null>(null);
   const [selectedDwarfId,   setSelectedDwarfId]   = useState<string | null>(null);
+  const [selectedDeepId,    setSelectedDeepId]    = useState<string | null>(null);
+  const [zoomLevel,         setZoomLevel]         = useState(38);
   const [exploredIds,       setExploredIds]       = useState<string[]>(["earth"]);
   const [showCredits,       setShowCredits]       = useState(false);
   const [activeExperimentId,setActiveExperimentId]= useState<string | null>(null);
@@ -122,11 +137,13 @@ export default function App() {
   });
 
   const camRef    = useRef({ yaw: 0.18, pitch: 0.36, zoom: 38 });
+  const camTarget = useRef<{ yaw: number; active: boolean }>({ yaw: 0.18, active: false });
   const motionRef = useRef({ x: 0, y: 0 });
   const pendingTap       = useRef<{ x: number; y: number } | null>(null);
   const planetScreenPos  = useRef<Record<string, { x: number; y: number }>>({});
   const satScreenPos     = useRef<Record<string, { x: number; y: number }>>({});
   const isInteracting    = useRef(false);
+  const canvasContainerRef = useRef<View>(null);
 
   // Panel
   const panelAnim   = useRef(new Animated.Value(PANEL_PEEK)).current;
@@ -137,6 +154,7 @@ export default function App() {
   const selectedSat    = selectedSatId ? SATELLITE_BY_ID[selectedSatId] : null;
   const selectedMoon   = selectedMoonId ? MOON_BY_ID[selectedMoonId] : null;
   const selectedDwarf  = selectedDwarfId ? DWARF_BY_ID[selectedDwarfId] : null;
+  const selectedDeep   = selectedDeepId ? DEEP_SPACE_BY_ID[selectedDeepId] : null;
   const selectedAgency = selectedAgencyId ? AGENCY_BY_ID[selectedAgencyId] : null;
   const agencyFilter   = selectedAgencyId
     ? SATELLITES.filter(s => s.agencyId === selectedAgencyId)
@@ -147,9 +165,20 @@ export default function App() {
     [labInputs, selectedPlanet]
   );
 
-  // Gyroscope
+  useEffect(() => {
+    screenW = viewW;
+    screenH = viewH;
+    panelAnim.setValue(panelIsOpen.current ? panelOpen : panelPeek);
+  }, [viewW, viewH, panelOpen, panelPeek, panelAnim]);
+
+  // Gyroscope — only available on native (iOS/Android) or mobile web
   useEffect(() => {
     if (!motionEnabled) { motionRef.current = { x: 0, y: 0 }; return undefined; }
+    if (Platform.OS === "web" && typeof DeviceOrientationEvent === "undefined") {
+      // Desktop browser — no gyroscope
+      setMotionEnabled(false);
+      return undefined;
+    }
     Gyroscope.setUpdateInterval(80);
     const sub = Gyroscope.addListener(({ x, y }) => {
       motionRef.current = {
@@ -159,6 +188,19 @@ export default function App() {
     });
     return () => sub.remove();
   }, [motionEnabled]);
+
+  // Mouse wheel zoom (web desktop)
+  useEffect(() => {
+    if (Platform.OS !== "web") return undefined;
+    const handler = (e: Event) => {
+      const we = e as WheelEvent;
+      we.preventDefault();
+      setCameraZoom(camRef.current.zoom + we.deltaY * 0.06);
+    };
+    // Attach to the document since canvasContainerRef may not have a DOM node directly
+    document.addEventListener("wheel", handler, { passive: false });
+    return () => document.removeEventListener("wheel", handler);
+  }, []);
 
   // Touch handling
   const touchSnap = useRef({ yaw: 0, pitch: 0, zoom: 38, dist: 0, tapX: 0, tapY: 0, t: 0 });
@@ -181,9 +223,11 @@ export default function App() {
         const touches = ev.nativeEvent.touches;
         if (touches.length >= 2) {
           const d = td(touches[0], touches[1]);
-          camRef.current.zoom = THREE.MathUtils.clamp(
-            touchSnap.current.zoom + (touchSnap.current.dist - d) * 0.055, 8, 90
+          const nextZoom = THREE.MathUtils.clamp(
+            touchSnap.current.zoom + (touchSnap.current.dist - d) * 0.075, 8, 180
           );
+          camRef.current.zoom = nextZoom;
+          setZoomLevel(nextZoom);
           return;
         }
         camRef.current.yaw   = touchSnap.current.yaw   + g.dx * 0.0072;
@@ -208,24 +252,30 @@ export default function App() {
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6,
       onPanResponderGrant: () => {
-        panelStartH.current = panelIsOpen.current ? PANEL_OPEN : PANEL_PEEK;
+        panelStartH.current = panelIsOpen.current ? panelOpen : panelPeek;
       },
       onPanResponderMove: (_, g) => {
         panelAnim.setValue(
-          Math.max(PANEL_PEEK, Math.min(PANEL_OPEN, panelStartH.current - g.dy))
+          Math.max(panelPeek, Math.min(panelOpen, panelStartH.current - g.dy))
         );
       },
       onPanResponderRelease: (_, g) => {
-        const mid = (PANEL_OPEN + PANEL_PEEK) / 2;
+        const mid = (panelOpen + panelPeek) / 2;
         snapPanel(g.vy < -0.4 || (g.vy >= 0 && panelStartH.current - g.dy > mid));
       },
     }),
-    []
+    [panelOpen, panelPeek]
   );
 
   const snapPanel = (open: boolean) => {
     panelIsOpen.current = open;
-    Animated.spring(panelAnim, { toValue: open ? PANEL_OPEN : PANEL_PEEK, tension: 85, friction: 13, useNativeDriver: false }).start();
+    Animated.spring(panelAnim, { toValue: open ? panelOpen : panelPeek, tension: 85, friction: 13, useNativeDriver: false }).start();
+  };
+
+  const setCameraZoom = (nextZoom: number) => {
+    const zoom = THREE.MathUtils.clamp(nextZoom, 8, 180);
+    camRef.current.zoom = zoom;
+    setZoomLevel(zoom);
   };
 
   const markExplored = useCallback((id: string) => {
@@ -237,9 +287,19 @@ export default function App() {
     setSelectedPlanetId(id);
     setSelectedMoonId(null);
     setSelectedDwarfId(null);
+    setSelectedDeepId(null);
     setFloatingCard("planet");
     markExplored(id);
-    camRef.current.zoom = THREE.MathUtils.clamp(p.orbitRadius * 1.28 + 7, 14, 62);
+    // Smooth zoom to planet
+    const nextZoom = THREE.MathUtils.clamp(p.orbitRadius * 1.28 + 7, 14, 62);
+    setCameraZoom(nextZoom);
+    // Aim camera yaw toward the planet's current position (approx from screenPos)
+    const sp = planetScreenPos.current[id];
+    if (sp) {
+      // Convert screen position to yaw offset
+      const nx = (sp.x / screenW) * 2 - 1; // -1..1
+      camTarget.current = { yaw: camRef.current.yaw - nx * 0.4, active: true };
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   }, [markExplored]);
 
@@ -248,11 +308,12 @@ export default function App() {
     setSelectedMoonId(id);
     setSelectedPlanetId(m.planetId);
     setSelectedDwarfId(null);
+    setSelectedDeepId(null);
     setFloatingCard("moon");
     markExplored(id);
     markExplored(m.planetId);
     const p = PLANET_BY_ID[m.planetId];
-    if (p) camRef.current.zoom = THREE.MathUtils.clamp(p.orbitRadius * 1.15 + 6, 12, 58);
+    if (p) setCameraZoom(THREE.MathUtils.clamp(p.orbitRadius * 1.15 + 6, 12, 58));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   }, [markExplored]);
 
@@ -260,9 +321,22 @@ export default function App() {
     const d = DWARF_BY_ID[id]; if (!d) return;
     setSelectedDwarfId(id);
     setSelectedMoonId(null);
+    setSelectedDeepId(null);
     setFloatingCard("dwarf");
     markExplored(id);
-    camRef.current.zoom = THREE.MathUtils.clamp(d.orbitRadius * 1.2 + 6, 16, 80);
+    setCameraZoom(THREE.MathUtils.clamp(d.orbitRadius * 1.2 + 6, 16, 80));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }, [markExplored]);
+
+  const onDeepTapped = useCallback((id: string) => {
+    const object = DEEP_SPACE_BY_ID[id]; if (!object) return;
+    setSelectedDeepId(id);
+    setSelectedMoonId(null);
+    setSelectedDwarfId(null);
+    setFloatingCard(null);
+    markExplored(id);
+    setCameraZoom(150);
+    snapPanel(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
   }, [markExplored]);
 
@@ -270,7 +344,8 @@ export default function App() {
     if (PLANET_BY_ID[id]) onPlanetTapped(id);
     else if (MOON_BY_ID[id]) onMoonTapped(id);
     else if (DWARF_BY_ID[id]) onDwarfTapped(id);
-  }, [onPlanetTapped, onMoonTapped, onDwarfTapped]);
+    else if (DEEP_SPACE_BY_ID[id]) onDeepTapped(id);
+  }, [onPlanetTapped, onMoonTapped, onDwarfTapped, onDeepTapped]);
 
   const onSatTapped = useCallback((id: string) => {
     if (!SATELLITE_BY_ID[id]) return;
@@ -315,17 +390,21 @@ export default function App() {
       <StatusBar barStyle="light-content" />
 
       {/* ── Full-screen 3D Canvas ── */}
-      <View style={StyleSheet.absoluteFillObject} {...canvasPan.panHandlers}>
+      <View ref={canvasContainerRef} style={StyleSheet.absoluteFillObject} {...canvasPan.panHandlers}>
         <Canvas
           camera={{ position: [0, 18, 38], fov: 50, near: 0.01, far: 2000 }}
           gl={{
-            antialias: false,
+            antialias: true,
             logarithmicDepthBuffer: true,
             powerPreference: "high-performance",
             alpha: false,
           }}
+          onCreated={({ gl }) => {
+            gl.toneMapping = THREE.ACESFilmicToneMapping;
+            gl.toneMappingExposure = 0.72;
+          }}
         >
-          <color attach="background" args={[C.bg]} />
+          <color attach="background" args={["#00000f"]} />
           <Suspense fallback={null}>
             {showEarthHub ? (
               <EarthHubScene
@@ -344,12 +423,14 @@ export default function App() {
                 paused={paused}
                 speed={speed}
                 camRef={camRef}
+                camTarget={camTarget}
                 motionRef={motionRef}
                 isInteracting={isInteracting}
                 pendingTap={pendingTap}
                 planetScreenPos={planetScreenPos}
                 labInputs={labInputs}
                 onPlanetTapped={onSolarTapped}
+                zoomLevel={zoomLevel}
               />
             )}
           </Suspense>
@@ -370,6 +451,7 @@ export default function App() {
               <GlassBtn label="i" onPress={() => setShowCredits(v => !v)} />
               <GlassBtn label="⌂" onPress={() => {
                 camRef.current = showEarthHub ? { yaw: 0.2, pitch: 0.5, zoom: 14 } : { yaw: 0.18, pitch: 0.36, zoom: 38 };
+                setZoomLevel(camRef.current.zoom);
                 setFloatingCard(null);
               }} />
             </View>
@@ -379,100 +461,122 @@ export default function App() {
         {/* Floating card — planet */}
         {floatingCard === "planet" && !showEarthHub && (
           <View style={ui.floatingCard} pointerEvents="auto">
-            <View style={ui.fcRow}>
-              <Text style={ui.fcEmoji}>{selectedPlanet.emoji}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={ui.fcName}>{selectedPlanet.name}</Text>
-                <Text style={ui.fcNick}>{selectedPlanet.nickname.toUpperCase()}</Text>
+            <LinearGradient colors={selectedPlanet.gradientColors} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcEmoji}>{selectedPlanet.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={ui.fcName}>{selectedPlanet.name}</Text>
+                  <Text style={ui.fcNick}>{selectedPlanet.nickname.toUpperCase()}</Text>
+                </View>
+                <Pressable onPress={() => setFloatingCard(null)}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
               </View>
-              <Pressable onPress={() => setFloatingCard(null)}>
-                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
-              </Pressable>
-            </View>
-            <Text style={ui.fcFact} numberOfLines={3}>{selectedPlanet.funFacts[0]}</Text>
-            <View style={ui.fcBtns}>
-              <Pressable style={ui.fcBtn} onPress={() => { setSection("universe"); snapPanel(true); }}>
-                <Text style={ui.fcBtnText}>🔍  Explore</Text>
-              </Pressable>
-              <Pressable style={[ui.fcBtn, ui.fcBtnCyan]} onPress={() => activateExperiment("earth_spin_faster")}>
-                <Text style={[ui.fcBtnText, { color: C.cyan }]}>🧪  Experiment</Text>
-              </Pressable>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <Text style={ui.fcFact} numberOfLines={2}>{selectedPlanet.funFacts[0]}</Text>
+              {/* Planet Internal Structure */}
+              <PlanetStructureView planet={selectedPlanet} />
+              <View style={ui.fcBtns}>
+                <Pressable style={ui.fcBtn} onPress={() => { setSection("universe"); snapPanel(true); }}>
+                  <Text style={ui.fcBtnText}>🔍  Explore</Text>
+                </Pressable>
+                <Pressable style={[ui.fcBtn, ui.fcBtnCyan]} onPress={() => activateExperiment("earth_spin_faster")}>
+                  <Text style={[ui.fcBtnText, { color: C.cyan }]}>🧪  Lab</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         )}
 
         {floatingCard === "moon" && selectedMoon && !showEarthHub && (
           <View style={ui.floatingCard} pointerEvents="auto">
-            <View style={ui.fcRow}>
-              <Text style={ui.fcEmoji}>{selectedMoon.emoji}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={ui.fcName}>{selectedMoon.name}</Text>
-                <Text style={ui.fcNick}>{selectedMoon.nickname.toUpperCase()}  ·  {PLANET_BY_ID[selectedMoon.planetId]?.name.toUpperCase()}</Text>
+            <LinearGradient colors={["#1a2a5e","#060c22"]} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcEmoji}>{selectedMoon.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={ui.fcName}>{selectedMoon.name}</Text>
+                  <Text style={ui.fcNick}>{selectedMoon.nickname.toUpperCase()}  ·  {PLANET_BY_ID[selectedMoon.planetId]?.name.toUpperCase()}</Text>
+                </View>
+                <Pressable onPress={() => setFloatingCard(null)}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
               </View>
-              <Pressable onPress={() => setFloatingCard(null)}>
-                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <Text style={ui.fcFact} numberOfLines={3}>{selectedMoon.fact}</Text>
+              <Pressable style={[ui.fcBtn, ui.fcBtnCyan]} onPress={() => { setSection("universe"); snapPanel(true); }}>
+                <Text style={[ui.fcBtnText, { color: C.cyan }]}>🔍  Moon facts</Text>
               </Pressable>
             </View>
-            <Text style={ui.fcFact} numberOfLines={3}>{selectedMoon.fact}</Text>
-            <Pressable style={[ui.fcBtn, ui.fcBtnCyan]} onPress={() => { setSection("universe"); snapPanel(true); }}>
-              <Text style={[ui.fcBtnText, { color: C.cyan }]}>🔍  Moon facts</Text>
-            </Pressable>
           </View>
         )}
 
         {floatingCard === "dwarf" && selectedDwarf && !showEarthHub && (
           <View style={ui.floatingCard} pointerEvents="auto">
-            <View style={ui.fcRow}>
-              <Text style={ui.fcEmoji}>{selectedDwarf.emoji}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={ui.fcName}>{selectedDwarf.name}</Text>
-                <Text style={ui.fcNick}>{selectedDwarf.nickname.toUpperCase()}</Text>
+            <LinearGradient colors={["#1e1040","#080520"]} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcEmoji}>{selectedDwarf.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={ui.fcName}>{selectedDwarf.name}</Text>
+                  <Text style={ui.fcNick}>{selectedDwarf.nickname.toUpperCase()}</Text>
+                </View>
+                <Pressable onPress={() => setFloatingCard(null)}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
               </View>
-              <Pressable onPress={() => setFloatingCard(null)}>
-                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
-              </Pressable>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <Text style={ui.fcFact} numberOfLines={3}>{selectedDwarf.fact}</Text>
             </View>
-            <Text style={ui.fcFact} numberOfLines={3}>{selectedDwarf.fact}</Text>
           </View>
         )}
 
         {showCredits && (
           <View style={ui.floatingCard} pointerEvents="auto">
-            <View style={ui.fcRow}>
-              <Text style={ui.fcName}>Credits</Text>
-              <Pressable onPress={() => setShowCredits(false)}>
-                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
-              </Pressable>
+            <LinearGradient colors={["#0a1a3a","#030c1e"]} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcName}>Credits &amp; Info</Text>
+                <Pressable onPress={() => setShowCredits(false)}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <Text style={ui.fcFact}>{TEXTURE_CREDIT}</Text>
+              <Text style={ui.fcFact}>Facts compiled from NASA, ESA, and ISRO public materials. Physics runs on-device. Cosmo uses Groq when online.</Text>
             </View>
-            <Text style={ui.fcFact}>{TEXTURE_CREDIT}</Text>
-            <Text style={ui.fcFact}>Facts compiled from NASA, ESA, and ISRO public materials. Physics runs on-device. Cosmo uses Groq when online.</Text>
           </View>
         )}
         {floatingCard === "satellite" && selectedSat && (
           <View style={ui.floatingCard} pointerEvents="auto">
-            <View style={ui.fcRow}>
-              <Text style={ui.fcEmoji}>{selectedSat.emoji}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={ui.fcName}>{selectedSat.shortName}</Text>
-                <Text style={ui.fcNick}>
-                  {selectedSat.flag}  {selectedSat.country.toUpperCase()}
-                  {"  ·  "}{selectedSat.orbitClass}{"  ·  "}{selectedSat.launchYear}
+            <LinearGradient colors={["#002244","#000c1e"]} style={ui.fcGradHeader}>
+              <View style={ui.fcRow}>
+                <Text style={ui.fcEmoji}>{selectedSat.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={ui.fcName}>{selectedSat.shortName}</Text>
+                  <Text style={ui.fcNick}>
+                    {selectedSat.flag}  {selectedSat.country.toUpperCase()}
+                    {"  ·  "}{selectedSat.orbitClass}{"  ·  "}{selectedSat.launchYear}
+                  </Text>
+                </View>
+                <Pressable onPress={() => { setFloatingCard(null); setSelectedSatId(null); }}>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 24, paddingHorizontal: 8 }}>×</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+            <View style={ui.fcBody}>
+              <View style={[ui.statusChip, { borderColor: selectedSat.status === "active" ? C.green + "55" : C.red + "55" }]}>
+                <View style={[ui.statusDot, { backgroundColor: selectedSat.status === "active" ? C.green : selectedSat.status === "retired" ? C.gold : C.red }]} />
+                <Text style={[ui.statusText, { color: selectedSat.status === "active" ? C.green : selectedSat.status === "retired" ? C.gold : C.red }]}>
+                  {selectedSat.status.toUpperCase()}  ·  Alt: {selectedSat.altitude.toLocaleString()} km  ·  {selectedSat.inclination}° inc
                 </Text>
               </View>
-              <Pressable onPress={() => { setFloatingCard(null); setSelectedSatId(null); }}>
-                <Text style={{ color: C.textSub, fontSize: 22, paddingHorizontal: 8 }}>×</Text>
+              <Text style={[ui.fcFact, { marginTop: 10 }]} numberOfLines={2}>{selectedSat.headline}</Text>
+              <Pressable style={[ui.fcBtn, ui.fcBtnCyan, { marginTop: 4 }]} onPress={() => { setSection("earthhub"); snapPanel(true); }}>
+                <Text style={[ui.fcBtnText, { color: C.cyan }]}>🔍  Full Mission Details</Text>
               </Pressable>
             </View>
-            <View style={[ui.statusChip, { borderColor: selectedSat.status === "active" ? C.green + "55" : C.red + "55" }]}>
-              <View style={[ui.statusDot, { backgroundColor: selectedSat.status === "active" ? C.green : selectedSat.status === "retired" ? C.gold : C.red }]} />
-              <Text style={[ui.statusText, { color: selectedSat.status === "active" ? C.green : selectedSat.status === "retired" ? C.gold : C.red }]}>
-                {selectedSat.status.toUpperCase()}  ·  Alt: {selectedSat.altitude.toLocaleString()} km  ·  {selectedSat.inclination}° inc
-              </Text>
-            </View>
-            <Text style={ui.fcFact} numberOfLines={2}>{selectedSat.headline}</Text>
-            <Pressable style={[ui.fcBtn, ui.fcBtnCyan, { marginTop: 4 }]} onPress={() => { setSection("earthhub"); snapPanel(true); }}>
-              <Text style={[ui.fcBtnText, { color: C.cyan }]}>🔍  Full Mission Details</Text>
-            </Pressable>
           </View>
         )}
 
@@ -517,19 +621,24 @@ export default function App() {
             </View>
           </View>
 
-          {/* Tabs */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={ui.tabRail} style={ui.tabScroll}>
+          {/* Tab grid — 2 rows × 4 columns, compact and professional */}
+          <View style={ui.tabGrid}>
             {SECTIONS.map(s => (
-              <Pressable key={s.id} style={[ui.tab, section === s.id && ui.tabActive]} onPress={() => switchToSection(s.id)}>
-                <Text style={ui.tabEmoji}>{s.emoji}</Text>
-                <Text style={[ui.tabLabel, section === s.id && ui.tabLabelActive]}>{s.label}</Text>
+              <Pressable
+                key={s.id}
+                style={[ui.tabTile, section === s.id && ui.tabTileActive]}
+                onPress={() => switchToSection(s.id)}
+              >
+                <Text style={[ui.tabTileEmoji, section === s.id && ui.tabTileEmojiActive]}>{s.emoji}</Text>
+                <Text style={[ui.tabTileLabel, section === s.id && ui.tabTileLabelActive]} numberOfLines={1}>{s.label}</Text>
+                {section === s.id && <View style={ui.tabTileDot} />}
               </Pressable>
             ))}
-          </ScrollView>
+          </View>
 
           {/* Content */}
           <ScrollView style={ui.sheetContent} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
-            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} speed={speed} setSpeed={setSpeed} zoomIn={() => { camRef.current.zoom = Math.max(8, camRef.current.zoom - 6); }} zoomOut={() => { camRef.current.zoom = Math.min(90, camRef.current.zoom + 6); }} />}
+            {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} selectedDeep={selectedDeep} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} onDeep={id => onDeepTapped(id)} speed={speed} setSpeed={setSpeed} zoomLevel={zoomLevel} zoomIn={() => setCameraZoom(camRef.current.zoom - 8)} zoomOut={() => setCameraZoom(camRef.current.zoom + 12)} onLearnLink={(url) => Linking.openURL(url).catch(() => undefined)} />}
             {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { onSatTapped(id); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
             {section === "agencies" && <AgenciesPanel selectedAgencyId={selectedAgencyId} onSelect={id => { setSelectedAgencyId(id); setSection("earthhub"); snapPanel(true); }} />}
             {section === "missions" && <MissionsPanel />}
@@ -547,14 +656,14 @@ export default function App() {
 
 // ─── HOME SCREEN ──────────────────────────────────────────────────────────────
 const HOME_TILES: Array<{ id: string; emoji: string; label: string; sub: string; grad: [string, string] }> = [
-  { id: "universe",  emoji: "🌌", label: "Universe",  sub: "3D Solar System",        grad: ["#091e4a","#030c1e"] },
-  { id: "earthhub",  emoji: "🌍", label: "Earth Hub", sub: "Satellites in orbit",    grad: ["#001a2e","#00090f"] },
-  { id: "agencies",  emoji: "🏛",  label: "Agencies",  sub: "Who explores space",     grad: ["#1a0535","#07011a"] },
-  { id: "missions",  emoji: "🚀", label: "Missions",  sub: "Historic journeys",      grad: ["#0f1c00","#060900"] },
-  { id: "timeline",  emoji: "🕒", label: "Timeline",  sub: "From Sputnik to now",    grad: ["#001829","#00070f"] },
-  { id: "lab",       emoji: "🧪", label: "Lab",       sub: "Play with physics",      grad: ["#001c12","#00080a"] },
-  { id: "cosmo",     emoji: "🤖", label: "Cosmo AI",  sub: "Ask anything",           grad: ["#1a0020","#090010"] },
-  { id: "quiz",      emoji: "🎯", label: "Quiz",      sub: "Test your knowledge",    grad: ["#140010","#060005"] },
+  { id: "universe",  emoji: "🌌", label: "Universe",  sub: "3D Solar System",        grad: ["#0d1f52","#030b22"] },
+  { id: "earthhub",  emoji: "🌍", label: "Earth Hub", sub: "Satellites in orbit",    grad: ["#012240","#000d18"] },
+  { id: "agencies",  emoji: "🏛",  label: "Agencies",  sub: "Who explores space",     grad: ["#220644","#0c0120"] },
+  { id: "missions",  emoji: "🚀", label: "Missions",  sub: "Historic journeys",      grad: ["#281400","#100600"] },
+  { id: "timeline",  emoji: "🕒", label: "Timeline",  sub: "From Sputnik to now",    grad: ["#002030","#000c14"] },
+  { id: "lab",       emoji: "🧪", label: "Lab",       sub: "Play with physics",      grad: ["#002618","#000d0a"] },
+  { id: "cosmo",     emoji: "🤖", label: "Cosmo AI",  sub: "Ask anything",           grad: ["#220030","#0d0018"] },
+  { id: "quiz",      emoji: "🎯", label: "Quiz",      sub: "Test your knowledge",    grad: ["#1e1400","#0d0900"] },
 ];
 
 function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s: string) => void }) {
@@ -675,37 +784,34 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
 
 // ─── 3D SOLAR SYSTEM SCENE ───────────────────────────────────────────────────
 function SolarScene({
-  selectedId, paused, speed, camRef, motionRef, isInteracting,
-  pendingTap, planetScreenPos, labInputs, onPlanetTapped,
+  selectedId, paused, speed, camRef, camTarget, motionRef, isInteracting,
+  pendingTap, planetScreenPos, labInputs, onPlanetTapped, zoomLevel,
 }: {
   selectedId: string; paused: boolean; speed: number;
   camRef: React.MutableRefObject<{ yaw: number; pitch: number; zoom: number }>;
+  camTarget: React.MutableRefObject<{ yaw: number; active: boolean }>;
   motionRef: React.MutableRefObject<{ x: number; y: number }>;
   isInteracting: React.MutableRefObject<boolean>;
   pendingTap: React.MutableRefObject<{ x: number; y: number } | null>;
   planetScreenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
   labInputs: LabInputs;
   onPlanetTapped: (id: string) => void;
+  zoomLevel: number;
 }) {
   return (
     <>
-      {/* Directional SUN light — positioned at [0,0,0] looking outward = realistic terminator */}
-      <ambientLight intensity={0.04} />
-      {/* Main sunlight — this is what creates the day/night terminator on planets */}
-      <directionalLight
-        position={[0, 0, 0]}
-        target-position={[0, 0, 50]}
-        intensity={0}
-      />
-      {/* Treat Sun as point light — radiates outward in all directions */}
-      <pointLight position={[0, 0, 0]} intensity={1100} color="#fff8e0" decay={2} distance={0} />
-      {/* Subtle blue fill from "opposite" side — simulates starlight */}
-      <pointLight position={[0, 28, 0]} intensity={12} color="#2040cc" decay={2} />
-      <CameraRig camRef={camRef} motionRef={motionRef} isInteracting={isInteracting} earthHub={false} />
+      {/* Realistic space lighting: dim ambient + point sun */}
+      <ambientLight intensity={0.018} color="#0a1020" />
+      <pointLight position={[0, 0, 0]} intensity={900} color="#fff4cc" decay={2} distance={0} />
+      {/* Very subtle cold fill from opposite */}
+      <pointLight position={[0, 40, 0]} intensity={6} color="#1020aa" decay={2} />
+      <CameraRig camRef={camRef} camTarget={camTarget} motionRef={motionRef} isInteracting={isInteracting} earthHub={false} />
       <ObjectTapDetector pendingTap={pendingTap} screenPos={planetScreenPos} onTapped={onPlanetTapped} />
       <StarSky />
       <MilkyWayBand />
       <StarField />
+      {/* Deep space nebulae + galaxies visible when zoomed out */}
+      {zoomLevel > 65 && <DeepSpaceEnvironment zoom={zoomLevel} />}
       <Sun />
       <AsteroidBelt paused={paused} speed={speed} />
       {PLANETS.map(pl => (
@@ -718,6 +824,9 @@ function SolarScene({
       ))}
       {DWARF_PLANETS.map(d => (
         <OrbitingDwarf key={d.id} dwarf={d} selected={d.id === selectedId} paused={paused} speed={speed} screenPos={planetScreenPos} />
+      ))}
+      {DEEP_SPACE_OBJECTS.map(object => (
+        <DeepSpaceMarker key={object.id} object={object} screenPos={planetScreenPos} />
       ))}
     </>
   );
@@ -861,7 +970,7 @@ function OrbitingSatellite({
   dimmed: boolean;
 }) {
   const groupRef  = useRef<THREE.Group>(null);
-  const dotRef    = useRef<THREE.Mesh>(null);
+  const dotRef    = useRef<THREE.Group>(null);
   const glowRef   = useRef<THREE.Mesh>(null);
 
   const vRadius = satVisualRadius(sat.altitude);
@@ -883,8 +992,8 @@ function OrbitingSatellite({
       dotRef.current.getWorldPosition(wp);
       wp.project(camera);
       screenPos.current[sat.id] = {
-        x: ((wp.x + 1) / 2) * SW,
-        y: ((-wp.y + 1) / 2) * SH,
+        x: ((wp.x + 1) / 2) * screenW,
+        y: ((-wp.y + 1) / 2) * screenH,
       };
     }
   });
@@ -912,11 +1021,9 @@ function OrbitingSatellite({
       </line>
       {/* Satellite dot, orbiting the ring */}
       <group ref={groupRef} rotation={[0, startAng, 0]}>
-        {/* The satellite marker is placed on the orbit ring */}
-        <mesh ref={dotRef} position={[vRadius, 0, 0]}>
-          <sphereGeometry args={[dotSize, 10, 10]} />
-          <meshBasicMaterial color={dotColor} />
-        </mesh>
+        <group ref={dotRef} position={[vRadius, 0, 0]} scale={selected ? 1.25 : 1}>
+          <SatelliteModel color={dotColor} size={dotSize} type={sat.type} />
+        </group>
         {/* Selection glow */}
         {selected && (
           <mesh ref={glowRef} position={[vRadius, 0, 0]}>
@@ -929,11 +1036,41 @@ function OrbitingSatellite({
   );
 }
 
+function SatelliteModel({ color, size, type }: { color: string; size: number; type: Satellite["type"] }) {
+  const panelSpan = type === "Communication" || type === "Navigation" ? 3.8 : 2.8;
+  const bodyLength = type === "Crewed" ? size * 2.6 : size * 1.8;
+  return (
+    <group rotation={[0.25, 0.45, 0.15]}>
+      <mesh>
+        <boxGeometry args={[bodyLength, size * 1.15, size * 1.15]} />
+        <meshStandardMaterial color="#d8e6ff" roughness={0.38} metalness={0.48} emissive={color} emissiveIntensity={0.12} />
+      </mesh>
+      <mesh position={[-bodyLength * 0.72, 0, 0]}>
+        <boxGeometry args={[size * 0.18, size * 0.9, size * panelSpan]} />
+        <meshStandardMaterial color="#153d8f" roughness={0.32} metalness={0.15} emissive="#0b4cff" emissiveIntensity={0.18} />
+      </mesh>
+      <mesh position={[bodyLength * 0.72, 0, 0]}>
+        <boxGeometry args={[size * 0.18, size * 0.9, size * panelSpan]} />
+        <meshStandardMaterial color="#153d8f" roughness={0.32} metalness={0.15} emissive="#0b4cff" emissiveIntensity={0.18} />
+      </mesh>
+      <mesh position={[0, size * 0.85, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <coneGeometry args={[size * 0.58, size * 0.5, 18]} />
+        <meshStandardMaterial color="#cbd7e8" roughness={0.48} metalness={0.55} />
+      </mesh>
+      <mesh position={[0, -size * 0.74, 0]}>
+        <sphereGeometry args={[size * 0.42, 12, 12]} />
+        <meshBasicMaterial color={color} transparent opacity={0.78} />
+      </mesh>
+    </group>
+  );
+}
+
 // ── Camera Rig ────────────────────────────────────────────────────────────────
 function CameraRig({
-  camRef, motionRef, isInteracting, earthHub,
+  camRef, camTarget, motionRef, isInteracting, earthHub,
 }: {
   camRef: React.MutableRefObject<{ yaw: number; pitch: number; zoom: number }>;
+  camTarget?: React.MutableRefObject<{ yaw: number; active: boolean }>;
   motionRef: React.MutableRefObject<{ x: number; y: number }>;
   isInteracting: React.MutableRefObject<boolean>;
   earthHub: boolean;
@@ -944,8 +1081,18 @@ function CameraRig({
   const dampMotion   = useRef({ x: 0, y: 0 });
 
   useFrame((_, delta) => {
-    if (isInteracting.current) lastInteract.current = Date.now();
-    if (Date.now() - lastInteract.current > 3500 && !isInteracting.current) {
+    if (isInteracting.current) {
+      lastInteract.current = Date.now();
+      if (camTarget?.current) camTarget.current.active = false; // user took over
+    }
+
+    // Smooth yaw focus animation toward tapped planet
+    if (camTarget?.current.active) {
+      const diff = camTarget.current.yaw - camRef.current.yaw;
+      camRef.current.yaw += diff * 0.08;
+      if (Math.abs(diff) < 0.002) camTarget.current.active = false;
+      autoYaw.current = camRef.current.yaw;
+    } else if (Date.now() - lastInteract.current > 3500 && !isInteracting.current) {
       autoYaw.current += delta * (earthHub ? 0.025 : 0.038);
       camRef.current.yaw = autoYaw.current;
     } else {
@@ -1141,6 +1288,59 @@ function MilkyWayBand() {
   return <points rotation={[0.42,0,0.26]}><bufferGeometry><bufferAttribute attach="attributes-position" args={[v,3]}/></bufferGeometry><pointsMaterial size={0.07} color="#b8ccee" transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false}/></points>;
 }
 
+// ── Deep Space Environment (nebulae + galaxy clusters) ────────────────────────
+function mkCloud(cx:number,cy:number,cz:number,radius:number,count:number){
+  const v:number[]=[];
+  for(let i=0;i<count;i++){
+    const theta=Math.random()*Math.PI*2,phi=Math.acos(2*Math.random()-1);
+    const r=radius*(0.3+Math.random()*0.7);
+    v.push(cx+r*Math.sin(phi)*Math.cos(theta),cy+r*Math.cos(phi)*0.45,cz+r*Math.sin(phi)*Math.sin(theta));
+  }
+  return new Float32Array(v);
+}
+function DeepSpaceEnvironment({ zoom }: { zoom: number }) {
+  const opacity = Math.min(1,(zoom-65)/35);
+  // Orion Nebula lookalike — warm orange/pink, 300 units away
+  const orion    = useMemo(()=>mkCloud(-220,40,-180,38,420),[]);
+  // Pillars of Creation lookalike — teal/blue
+  const pillars  = useMemo(()=>mkCloud(280,-30,260,28,320),[]);
+  // Carina nebula — violet/purple
+  const carina   = useMemo(()=>mkCloud(60,80,-320,42,360),[]);
+  // Distant galaxy clusters (tight balls of stars)
+  const gal1 = useMemo(()=>mkCloud(-380,20,0,18,180),[]);
+  const gal2 = useMemo(()=>mkCloud(0,-40,400,14,140),[]);
+  const gal3 = useMemo(()=>mkCloud(350,60,-350,16,160),[]);
+  const gal4 = useMemo(()=>mkCloud(-300,-50,300,12,120),[]);
+  return (
+    <>
+      {/* Orion Nebula */}
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[orion,3]}/></bufferGeometry>
+        <pointsMaterial size={0.55} color="#ff8844" transparent opacity={0.28*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[orion,3]}/></bufferGeometry>
+        <pointsMaterial size={1.2}  color="#ff4488" transparent opacity={0.14*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      {/* Pillars of Creation */}
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[pillars,3]}/></bufferGeometry>
+        <pointsMaterial size={0.48} color="#44ddcc" transparent opacity={0.24*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[pillars,3]}/></bufferGeometry>
+        <pointsMaterial size={1.0}  color="#88ffee" transparent opacity={0.10*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      {/* Carina Nebula */}
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[carina,3]}/></bufferGeometry>
+        <pointsMaterial size={0.52} color="#cc44ff" transparent opacity={0.22*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[carina,3]}/></bufferGeometry>
+        <pointsMaterial size={1.1}  color="#ff88ff" transparent opacity={0.09*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      {/* Distant Galaxies */}
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal1,3]}/></bufferGeometry>
+        <pointsMaterial size={0.3} color="#ffe8cc" transparent opacity={0.55*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal2,3]}/></bufferGeometry>
+        <pointsMaterial size={0.3} color="#ccddff" transparent opacity={0.55*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal3,3]}/></bufferGeometry>
+        <pointsMaterial size={0.3} color="#ffd8aa" transparent opacity={0.50*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+      <points><bufferGeometry><bufferAttribute attach="attributes-position" args={[gal4,3]}/></bufferGeometry>
+        <pointsMaterial size={0.3} color="#ddeeff" transparent opacity={0.48*opacity} blending={THREE.AdditiveBlending} depthWrite={false}/></points>
+    </>
+  );
+}
+
 // ── Orbiting Planet ───────────────────────────────────────────────────────────
 function OrbitingPlanet({
   planet, selected, paused, speed, labInputs, screenPos,
@@ -1169,7 +1369,7 @@ function OrbitingPlanet({
     }
     if (planetRef.current) {
       const wp = new THREE.Vector3(); planetRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[planet.id] = { x:((wp.x+1)/2)*SW, y:((-wp.y+1)/2)*SH };
+      screenPos.current[planet.id] = { x:((wp.x+1)/2)*screenW, y:((-wp.y+1)/2)*screenH };
     }
   });
 
@@ -1186,13 +1386,13 @@ function OrbitingPlanet({
       })()}
       <group position={[planet.orbitRadius,0,0]}>
         <mesh ref={planetRef}>
-          <sphereGeometry args={[vR, 32, 32]} />
+          <sphereGeometry args={[vR, 64, 64]} />
           <meshStandardMaterial
             map={map ?? undefined}
             color={map ? "#ffffff" : planet.color}
-            roughness={planet.id === "earth" ? 0.55 : planet.id === "mercury" ? 0.92 : 0.78}
-            metalness={planet.id === "mercury" ? 0.25 : 0.02}
-            emissive={selected ? new THREE.Color(planet.color).multiplyScalar(0.12) : new THREE.Color(0, 0, 0)}
+            roughness={planet.id === "earth" ? 0.52 : planet.id === "mercury" ? 0.92 : planet.id === "venus" ? 0.72 : 0.76}
+            metalness={planet.id === "mercury" ? 0.28 : 0.02}
+            emissive={selected ? new THREE.Color(planet.color).multiplyScalar(0.10) : new THREE.Color(0, 0, 0)}
             emissiveIntensity={selected ? 1 : 0}
           />
         </mesh>
@@ -1202,9 +1402,14 @@ function OrbitingPlanet({
             <meshStandardMaterial map={venusAtmo ?? undefined} color={venusAtmo ? "#ffffff" : "#e0b56e"} transparent opacity={0.55} depthWrite={false} />
           </mesh>
         )}
-        <mesh><sphereGeometry args={[vR*1.12,24,24]}/><meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>
-        {selected&&<mesh ref={glowRef}><sphereGeometry args={[vR*1.28,20,20]}/><meshBasicMaterial color={C.cyan} transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>}
-        {planet.ring&&<mesh rotation={[Math.PI/2.1,0,0]}><ringGeometry args={[vR*1.42,vR*2.2,64]}/><meshBasicMaterial color="#d9c49c" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false}/></mesh>}
+        <mesh><sphereGeometry args={[vR*1.10,32,32]}/><meshBasicMaterial color={planet.color} transparent opacity={0.10} side={THREE.BackSide} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>
+        {selected&&<mesh ref={glowRef}><sphereGeometry args={[vR*1.26,24,24]}/><meshBasicMaterial color={C.cyan} transparent opacity={0.14} blending={THREE.AdditiveBlending} depthWrite={false}/></mesh>}
+        {planet.ring&&(
+          <group>
+            <mesh rotation={[Math.PI/2.15,0,0.18]}><ringGeometry args={[vR*1.38,vR*1.90,128]}/><meshBasicMaterial color="#e8d9a8" transparent opacity={0.60} side={THREE.DoubleSide} depthWrite={false}/></mesh>
+            <mesh rotation={[Math.PI/2.15,0,0.18]}><ringGeometry args={[vR*1.92,vR*2.26,128]}/><meshBasicMaterial color="#c8b880" transparent opacity={0.38} side={THREE.DoubleSide} depthWrite={false}/></mesh>
+          </group>
+        )}
         {moons.map(moon => (
           <OrbitingMoon key={moon.id} moon={moon} planetRadius={vR} paused={paused} speed={speed} screenPos={screenPos} />
         ))}
@@ -1224,20 +1429,101 @@ function OrbitingMoon({
   const map = useBodyTexture(moon.textureKey);
   const r = Math.max(0.05, planetRadius * moon.visualRadius);
   const d = planetRadius * moon.orbitScale;
+  const tilt = moon.orbitTilt * (Math.PI / 180);
+  const orbitPts = useMemo(() => {
+    const pts: number[] = [];
+    for (let i = 0; i <= 80; i++) {
+      const a = (i / 80) * Math.PI * 2;
+      pts.push(Math.cos(a) * d, 0, Math.sin(a) * d);
+    }
+    return new Float32Array(pts);
+  }, [d]);
 
   useFrame((state, delta) => {
-    if (!paused && groupRef.current) groupRef.current.rotation.y += delta * 0.35 * speed;
+    if (!paused && groupRef.current) groupRef.current.rotation.y += delta * moon.orbitSpeed * moon.orbitDirection * speed;
     if (meshRef.current) {
       const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[moon.id] = { x: ((wp.x + 1) / 2) * SW, y: ((-wp.y + 1) / 2) * SH };
+      screenPos.current[moon.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
     }
   });
 
   return (
+    <group rotation={[tilt, 0, 0]}>
+      <line>
+        <bufferGeometry><bufferAttribute attach="attributes-position" args={[orbitPts, 3]} /></bufferGeometry>
+        <lineBasicMaterial color={moon.color} transparent opacity={0.18} />
+      </line>
     <group ref={groupRef}>
       <mesh ref={meshRef} position={[d, 0, 0]}>
         <sphereGeometry args={[r, 16, 16]} />
         <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : moon.color} roughness={0.9} />
+      </mesh>
+    </group>
+    </group>
+  );
+}
+
+function DeepSpaceMarker({
+  object,
+  screenPos,
+}: {
+  object: DeepSpaceObject;
+  screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    const time = state.clock.getElapsedTime();
+    if (meshRef.current) {
+      meshRef.current.rotation.z += object.type === "Galaxy" ? 0.0015 : 0.0005;
+      const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
+      screenPos.current[object.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
+    }
+    if (haloRef.current) {
+      (haloRef.current.material as THREE.MeshBasicMaterial).opacity = 0.18 + Math.sin(time * 0.8) * 0.06;
+    }
+  });
+
+  if (object.type === "Galaxy") {
+    return (
+      <group position={object.position} rotation={[0.35, 0.2, -0.45]}>
+        <mesh ref={meshRef} scale={[1.9, 0.34, 1]}>
+          <sphereGeometry args={[object.visualRadius, 32, 16]} />
+          <meshBasicMaterial color={object.color} transparent opacity={0.28} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={haloRef} scale={[3.0, 0.12, 1.55]}>
+          <sphereGeometry args={[object.visualRadius, 24, 12]} />
+          <meshBasicMaterial color={object.color} transparent opacity={0.16} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      </group>
+    );
+  }
+
+  if (object.type === "Nebula") {
+    return (
+      <group position={object.position}>
+        <mesh ref={meshRef}>
+          <sphereGeometry args={[object.visualRadius, 24, 16]} />
+          <meshBasicMaterial color={object.color} transparent opacity={0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh ref={haloRef} scale={[1.8, 0.8, 1.25]}>
+          <sphereGeometry args={[object.visualRadius, 18, 12]} />
+          <meshBasicMaterial color={object.color} transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <group position={object.position}>
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[object.visualRadius, 16, 16]} />
+        <meshBasicMaterial color={object.color} />
+      </mesh>
+      <mesh ref={haloRef}>
+        <sphereGeometry args={[object.visualRadius * 3.4, 16, 16]} />
+        <meshBasicMaterial color={object.color} transparent opacity={0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
     </group>
   );
@@ -1258,7 +1544,7 @@ function OrbitingDwarf({
     if (!paused && meshRef.current) meshRef.current.rotation.y += delta * dwarf.rotationSpeed * speed;
     if (meshRef.current) {
       const wp = new THREE.Vector3(); meshRef.current.getWorldPosition(wp); wp.project(state.camera);
-      screenPos.current[dwarf.id] = { x: ((wp.x + 1) / 2) * SW, y: ((-wp.y + 1) / 2) * SH };
+      screenPos.current[dwarf.id] = { x: ((wp.x + 1) / 2) * screenW, y: ((-wp.y + 1) / 2) * screenH };
     }
   });
 
@@ -1290,20 +1576,22 @@ function AsteroidBelt({ paused, speed }: { paused: boolean; speed: number }) {
 }
 
 // ─── UNIVERSE PANEL ──────────────────────────────────────────────────────────
-function UniversePanel({ selectedPlanet, selectedMoon, onFocus, onMoon, speed, setSpeed, zoomIn, zoomOut }: {
-  selectedPlanet: Planet; selectedMoon: Moon | null; onFocus: (id: string) => void; onMoon: (id: string) => void;
-  speed: number; setSpeed: (v: number) => void; zoomIn: () => void; zoomOut: () => void;
+function UniversePanel({ selectedPlanet, selectedMoon, selectedDeep, onFocus, onMoon, onDeep, speed, setSpeed, zoomLevel, zoomIn, zoomOut, onLearnLink }: {
+  selectedPlanet: Planet; selectedMoon: Moon | null; selectedDeep: DeepSpaceObject | null;
+  onFocus: (id: string) => void; onMoon: (id: string) => void; onDeep: (id: string) => void;
+  speed: number; setSpeed: (v: number) => void; zoomLevel: number; zoomIn: () => void; zoomOut: () => void;
+  onLearnLink: (url: string) => void;
 }) {
   const [factIdx, setFactIdx] = useState(0);
   const planetMoons = MOONS_BY_PLANET[selectedPlanet.id] ?? [];
-  const facts = selectedMoon ? selectedMoon.funFacts : selectedPlanet.funFacts;
+  const facts = selectedDeep ? selectedDeep.facts : selectedMoon ? selectedMoon.funFacts : selectedPlanet.funFacts;
   return (
     <View style={pw.wrap}>
       <LinearGradient colors={selectedPlanet.gradientColors} style={pw.hero}>
-        <Text style={pw.heroEmoji}>{selectedMoon ? selectedMoon.emoji : selectedPlanet.emoji}</Text>
+        <Text style={pw.heroEmoji}>{selectedDeep ? selectedDeep.emoji : selectedMoon ? selectedMoon.emoji : selectedPlanet.emoji}</Text>
         <View style={{ flex:1 }}>
-          <Text style={pw.heroName}>{selectedMoon ? selectedMoon.name : selectedPlanet.name}</Text>
-          <Text style={pw.heroNick}>{(selectedMoon ? selectedMoon.nickname : selectedPlanet.nickname).toUpperCase()}</Text>
+          <Text style={pw.heroName}>{selectedDeep ? selectedDeep.name : selectedMoon ? selectedMoon.name : selectedPlanet.name}</Text>
+          <Text style={pw.heroNick}>{(selectedDeep ? selectedDeep.type : selectedMoon ? selectedMoon.nickname : selectedPlanet.nickname).toUpperCase()}</Text>
         </View>
         <View style={{ flexDirection:"row", gap:6 }}>
           <GlassBtn label="+" onPress={zoomIn} small /><GlassBtn label="−" onPress={zoomOut} small />
@@ -1315,13 +1603,24 @@ function UniversePanel({ selectedPlanet, selectedMoon, onFocus, onMoon, speed, s
         <Text style={pw.factTap}>TAP FOR NEXT FACT</Text>
       </Pressable>
 
-      {selectedMoon ? (
+      {selectedDeep ? (
+        <>
+          <View style={pw.atmo}><Text style={pw.atmoLabel}>WHY IT MATTERS</Text><Text style={pw.atmoText}>{selectedDeep.whyItMatters}</Text></View>
+          <View style={pw.statsRow}><MiniStat l="Type" v={selectedDeep.type} accent={C.cyan}/><MiniStat l="Distance" v={selectedDeep.distance} accent={C.gold}/></View>
+          <View style={pw.atmo}><Text style={pw.atmoLabel}>DISCOVERY</Text><Text style={pw.atmoText}>{selectedDeep.discovered}</Text></View>
+        </>
+      ) : selectedMoon ? (
         <View style={pw.atmo}><Text style={pw.atmoLabel}>ORBITS</Text><Text style={pw.atmoText}>{selectedMoon.fact}</Text></View>
       ) : (
         <>
           <View style={pw.statsRow}><MiniStat l="Gravity" v={`${selectedPlanet.gravity}g`} accent={C.cyan}/><MiniStat l="Day" v={selectedPlanet.day} accent={C.gold}/><MiniStat l="Moons" v={`${selectedPlanet.moons}`} accent={C.violet}/></View>
           <View style={pw.statsRow}><MiniStat l="Temp" v={`${selectedPlanet.temperature}°C`} accent={C.red}/><MiniStat l="Year" v={selectedPlanet.year} accent={C.green}/><MiniStat l="Dist" v={`${selectedPlanet.distanceAU} AU`} accent={C.orange}/></View>
           <View style={pw.atmo}><Text style={pw.atmoLabel}>ATMOSPHERE</Text><Text style={pw.atmoText}>{selectedPlanet.atmosphere}</Text></View>
+          <View style={pw.atmo}><Text style={pw.atmoLabel}>NAME & DISCOVERY</Text><Text style={pw.atmoText}>{selectedPlanet.namedFor} {selectedPlanet.discovery}</Text></View>
+          <Text style={[pw.atmoLabel, { marginTop: 12 }]}>MISSIONS & ORGANIZATIONS</Text>
+          <Text style={pw.atmoText}>Missions: {selectedPlanet.missions.join(", ")}</Text>
+          <Text style={pw.atmoText}>Upcoming: {selectedPlanet.upcomingMissions.join(", ")}</Text>
+          <Text style={pw.atmoText}>Organizations: {selectedPlanet.organizations.join(", ")}</Text>
         </>
       )}
 
@@ -1349,6 +1648,48 @@ function UniversePanel({ selectedPlanet, selectedMoon, onFocus, onMoon, speed, s
           ))}
         </View>
       </ScrollView>
+
+      {zoomLevel > 72 && (
+        <>
+          <Text style={[pw.atmoLabel, { marginTop: 12 }]}>DEEP SPACE — TAP TO EXPLORE</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop:8 }}>
+            <View style={{ flexDirection:"row", gap:7 }}>
+              {DEEP_SPACE_OBJECTS.map(object => (
+                <Pressable key={object.id} style={[pw.chip, selectedDeep?.id===object.id&&pw.chipActive]} onPress={()=>onDeep(object.id)}>
+                  <Text style={[pw.chipText, selectedDeep?.id===object.id&&{color:C.cyan}]}>{object.emoji} {object.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        </>
+      )}
+
+      {!selectedMoon && !selectedDeep && (
+        <>
+          <Text style={[pw.atmoLabel, { marginTop: 12 }]}>LEARN MORE</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+            <View style={{ flexDirection:"row", gap:7 }}>
+              {selectedPlanet.links.map(link => (
+                <Pressable key={link.url} style={pw.chip} onPress={() => onLearnLink(link.url)}>
+                  <Text style={pw.chipText}>↗ {link.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        </>
+      )}
+
+      {selectedDeep && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+          <View style={{ flexDirection:"row", gap:7 }}>
+            {selectedDeep.links.map(link => (
+              <Pressable key={link.url} style={pw.chip} onPress={() => onLearnLink(link.url)}>
+                <Text style={pw.chipText}>↗ {link.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+      )}
 
       <View style={pw.speedRow}>
         <Text style={pw.speedLabel}>SIMULATION SPEED</Text>
@@ -1627,13 +1968,298 @@ function TimelinePanel() {
   );
 }
 
+
+// ─── PLANET INTERNAL STRUCTURE ────────────────────────────────────────────────
+const PLANET_LAYERS: Record<string, Array<{ label: string; color: string; temp: string; depth: string }>> = {
+  mercury: [
+    { label:"Inner Core",   color:"#e87040", temp:"~1,800°C", depth:"0–600 km" },
+    { label:"Outer Core",   color:"#d45520", temp:"~1,000°C", depth:"600–1,800 km" },
+    { label:"Mantle",       color:"#8a4020", temp:"~700°C",   depth:"1,800–2,350 km" },
+    { label:"Crust",        color:"#5a3010", temp:"~450°C",   depth:"2,350–2,440 km" },
+  ],
+  venus: [
+    { label:"Iron Core",    color:"#d45020", temp:"~5,000°C", depth:"0–3,110 km" },
+    { label:"Mantle",       color:"#a06030", temp:"~2,000°C", depth:"3,110–6,051 km" },
+    { label:"Crust",        color:"#c09050", temp:"~465°C",   depth:"surface" },
+  ],
+  earth: [
+    { label:"Inner Core",   color:"#ffbb44", temp:"~5,400°C", depth:"0–1,200 km" },
+    { label:"Outer Core",   color:"#ff8822", temp:"~4,000°C", depth:"1,200–3,400 km" },
+    { label:"Mantle",       color:"#883020", temp:"~2,000°C", depth:"3,400–6,335 km" },
+    { label:"Crust",        color:"#44aa66", temp:"~20°C",    depth:"thin shell" },
+  ],
+  mars: [
+    { label:"Iron Core",    color:"#cc4422", temp:"~1,400°C", depth:"0–1,800 km" },
+    { label:"Silicate Mantle",color:"#883322", temp:"~1,000°C",depth:"1,800–3,370 km" },
+    { label:"Crust",        color:"#bb5533", temp:"−60°C",   depth:"thin shell" },
+  ],
+  jupiter: [
+    { label:"Rocky Core",   color:"#aa6622", temp:"~24,000°C",depth:"0–14,000 km" },
+    { label:"Metallic H₂",  color:"#446699", temp:"~10,000°C",depth:"14,000–50,000 km" },
+    { label:"Liquid H₂",    color:"#6688cc", temp:"~5,000°C", depth:"50,000–71,000 km" },
+    { label:"Atmosphere",   color:"#ccaa66", temp:"−110°C",  depth:"outer layer" },
+  ],
+  saturn: [
+    { label:"Rocky Core",   color:"#aa8844", temp:"~15,000°C",depth:"0–9,000 km" },
+    { label:"Metallic H₂",  color:"#557799", temp:"~7,000°C", depth:"9,000–30,000 km" },
+    { label:"Liquid H₂",    color:"#7799bb", temp:"~3,000°C", depth:"30,000–60,000 km" },
+    { label:"Atmosphere",   color:"#ddbb88", temp:"−140°C",  depth:"outer layer" },
+  ],
+  uranus: [
+    { label:"Rocky Core",   color:"#668899", temp:"~5,000°C", depth:"0–7,500 km" },
+    { label:"Ice Mantle",   color:"#4499bb", temp:"~2,000°C", depth:"7,500–25,000 km" },
+    { label:"Atmosphere",   color:"#88ccdd", temp:"−195°C",  depth:"outer" },
+  ],
+  neptune: [
+    { label:"Rocky Core",   color:"#334466", temp:"~5,400°C", depth:"0–7,000 km" },
+    { label:"Ice Mantle",   color:"#335588", temp:"~2,500°C", depth:"7,000–24,000 km" },
+    { label:"Atmosphere",   color:"#4466aa", temp:"−200°C",  depth:"outer" },
+  ],
+};
+function PlanetStructureView({ planet }: { planet: Planet }) {
+  const layers = PLANET_LAYERS[planet.id] ?? PLANET_LAYERS.earth;
+  const n = layers.length;
+  const R = 52; // outer radius px
+  return (
+    <View style={{ marginVertical:10 }}>
+      <Text style={{ color:"rgba(160,210,240,0.7)", fontSize:9, fontWeight:"900", letterSpacing:1.5, marginBottom:8 }}>INTERNAL STRUCTURE</Text>
+      <View style={{ flexDirection:"row", alignItems:"center", gap:12 }}>
+        {/* Concentric ring diagram */}
+        <View style={{ width:R*2+4, height:R*2+4, position:"relative" }}>
+          {layers.map((layer, i) => {
+            const frac = (n - i) / n;
+            const d = frac * (R * 2 + 4);
+            const offset = (R * 2 + 4 - d) / 2;
+            return (
+              <View key={layer.label} style={{
+                position:"absolute", left:offset, top:offset,
+                width:d, height:d, borderRadius:d/2,
+                backgroundColor: layer.color,
+                opacity: 0.85 + i * 0.03,
+              }}/>
+            );
+          })}
+        </View>
+        {/* Legend */}
+        <View style={{ flex:1, gap:4 }}>
+          {layers.map((layer) => (
+            <View key={layer.label} style={{ flexDirection:"row", alignItems:"center", gap:6 }}>
+              <View style={{ width:8, height:8, borderRadius:4, backgroundColor:layer.color }}/>
+              <View style={{ flex:1 }}>
+                <Text style={{ color:"#eef5ff", fontSize:10, fontWeight:"800" }}>{layer.label}</Text>
+                <Text style={{ color:"rgba(140,190,220,0.65)", fontSize:8.5 }}>{layer.temp} · {layer.depth}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ─── ROCKET LAUNCH SIMULATOR ──────────────────────────────────────────────────
+const ROCKET_TARGETS = [
+  { id:"mars",    name:"Mars",    emoji:"🔴", r:1.52, color:"#e05030", dv1:3.6, dv2:2.1, days:259, info:"Closest approach every 26 months" },
+  { id:"venus",   name:"Venus",   emoji:"🟡", r:0.72, color:"#e8b040", dv1:3.5, dv2:3.2, days:146, info:"Inner planet — counterintuitive braking needed" },
+  { id:"jupiter", name:"Jupiter", emoji:"🟠", r:5.20, color:"#d8a060", dv1:8.8, dv2:6.4, days:998, info:"Needs gravity assist from inner planets" },
+];
+type RocketPhase = "setup" | "launch" | "result";
+function RocketLaunchSim() {
+  const [target, setTarget]     = useState(ROCKET_TARGETS[0]);
+  const [fuel, setFuel]         = useState(75);
+  const [phase, setPhase]       = useState<RocketPhase>("setup");
+  const [animProg, setAnimProg] = useState(0);
+  const [score, setScore]       = useState(0);
+  const animRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Hohmann transfer math (simplified, AU-based)
+  const r1 = 1.0; // Earth
+  const r2 = target.r;
+  const a  = (r1 + r2) / 2; // semi-major axis
+  const transferDays = Math.round(Math.PI * Math.sqrt(a ** 3 / 1) * 365.25); // Kepler
+  const requiredDv   = target.dv1 + target.dv2; // km/s total delta-v budget
+  const availableDv  = fuel * 0.18; // fuel% → km/s (scale for game)
+  const fuelOk       = availableDv >= requiredDv * 0.9;
+
+  const launch = () => {
+    setPhase("launch");
+    setAnimProg(0);
+    let p = 0;
+    animRef.current = setInterval(() => {
+      p += 2;
+      setAnimProg(p);
+      if (p >= 100) {
+        clearInterval(animRef.current!);
+        const sc = fuelOk ? Math.round(((availableDv - requiredDv*0.9)/(requiredDv*0.3))*40 + 60) : Math.round((availableDv/requiredDv)*50);
+        setScore(Math.min(100, Math.max(5, sc)));
+        setPhase("result");
+      }
+    }, 40);
+  };
+  const reset = () => { setPhase("setup"); setAnimProg(0); if(animRef.current) clearInterval(animRef.current!); };
+
+  // Draw orbit animation (SVG-style using Views)
+  const W = 260, H = 200, cx = W/2, cy = H/2;
+  const earthR = 55, targetR = Math.round(earthR * Math.min(3, r2/r1));
+  // Transfer ellipse: draw as partial arc using a View approach
+  const rocketAngle = (animProg / 100) * Math.PI; // 0 = Earth departure, π = target arrival
+  const ellipseA = (earthR + targetR) / 2;
+  const ellipseB = earthR * 0.85;
+  const rocketX = cx - ellipseA * Math.cos(rocketAngle);
+  const rocketY = cy - ellipseB * Math.sin(rocketAngle);
+
+  return (
+    <View style={{ paddingHorizontal:16, paddingVertical:12 }}>
+      <View style={{ flexDirection:"row", alignItems:"center", gap:10, marginBottom:14 }}>
+        <Text style={{ fontSize:28 }}>🚀</Text>
+        <View>
+          <Text style={{ color:"#eef5ff", fontSize:17, fontWeight:"900" }}>Mission Control</Text>
+          <Text style={{ color:"#8ab8d8", fontSize:11, marginTop:2 }}>Plan your Hohmann transfer orbit</Text>
+        </View>
+      </View>
+
+      {phase === "setup" && (
+        <>
+          {/* Target planet selector */}
+          <Text style={{ color:"rgba(160,210,240,0.7)", fontSize:9, fontWeight:"900", letterSpacing:1.5, marginBottom:8 }}>TARGET PLANET</Text>
+          <View style={{ flexDirection:"row", gap:8, marginBottom:16 }}>
+            {ROCKET_TARGETS.map(t => (
+              <Pressable key={t.id} onPress={() => setTarget(t)} style={{
+                flex:1, alignItems:"center", paddingVertical:10, borderRadius:14,
+                backgroundColor: target.id===t.id ? "rgba(77,249,255,0.14)" : "rgba(255,255,255,0.06)",
+                borderWidth:1, borderColor: target.id===t.id ? "rgba(77,249,255,0.5)" : "rgba(255,255,255,0.1)",
+              }}>
+                <Text style={{ fontSize:22, marginBottom:4 }}>{t.emoji}</Text>
+                <Text style={{ color:"#eef5ff", fontSize:11, fontWeight:"900" }}>{t.name}</Text>
+                <Text style={{ color:"#8ab8d8", fontSize:9, marginTop:2 }}>{t.r} AU</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Info card */}
+          <View style={{ backgroundColor:"rgba(77,249,255,0.06)", borderRadius:12, padding:12, marginBottom:14, borderWidth:1, borderColor:"rgba(77,249,255,0.2)" }}>
+            <Text style={{ color:"#4df9ff", fontSize:10, fontWeight:"900", letterSpacing:1, marginBottom:5 }}>MISSION PROFILE</Text>
+            <Text style={{ color:"#eef5ff", fontSize:13, fontWeight:"700" }}>Earth → {target.name}</Text>
+            <Text style={{ color:"#8ab8d8", fontSize:11.5, marginTop:4 }}>Transfer time: ~{transferDays} days</Text>
+            <Text style={{ color:"#8ab8d8", fontSize:11.5, marginTop:2 }}>Delta-v needed: ~{requiredDv.toFixed(1)} km/s</Text>
+            <Text style={{ color:"#8ab8d8", fontSize:10.5, marginTop:6, fontStyle:"italic" }}>{target.info}</Text>
+          </View>
+
+          {/* Fuel slider */}
+          <Text style={{ color:"rgba(160,210,240,0.7)", fontSize:9, fontWeight:"900", letterSpacing:1.5, marginBottom:8 }}>
+            FUEL BUDGET — {fuel}%  ({(availableDv).toFixed(1)} km/s available)
+          </Text>
+          <View style={{ flexDirection:"row", gap:8, marginBottom:6 }}>
+            {[25,50,60,75,90,100].map(v => (
+              <Pressable key={v} onPress={() => setFuel(v)} style={{
+                flex:1, height:36, alignItems:"center", justifyContent:"center", borderRadius:10,
+                backgroundColor: fuel===v ? "rgba(77,249,255,0.16)" : "rgba(255,255,255,0.06)",
+                borderWidth:1, borderColor: fuel===v ? "rgba(77,249,255,0.5)" : "rgba(255,255,255,0.08)",
+              }}>
+                <Text style={{ color: fuel===v ? "#4df9ff" : "#8ab8d8", fontSize:12, fontWeight:"900" }}>{v}%</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={{ color: fuelOk ? "#4dffc3" : "#ff5580", fontSize:11, fontWeight:"900", marginBottom:14 }}>
+            {fuelOk ? "✓ Sufficient delta-v for mission" : `✗ Need ${(requiredDv*0.9 - availableDv).toFixed(1)} km/s more — add fuel!`}
+          </Text>
+
+          <Pressable onPress={launch} style={{
+            borderRadius:14, padding:15, alignItems:"center",
+            backgroundColor: fuelOk ? "rgba(77,249,255,0.2)" : "rgba(255,255,255,0.07)",
+            borderWidth:1, borderColor: fuelOk ? "rgba(77,249,255,0.6)" : "rgba(255,255,255,0.12)",
+          }}>
+            <Text style={{ color: fuelOk ? "#4df9ff" : "#8ab8d8", fontSize:15, fontWeight:"900" }}>
+              🚀  Launch Mission
+            </Text>
+          </Pressable>
+
+          {/* Learning tip */}
+          <View style={{ backgroundColor:"rgba(255,209,102,0.07)", borderRadius:12, padding:12, marginTop:14, borderWidth:1, borderColor:"rgba(255,209,102,0.22)" }}>
+            <Text style={{ color:"#ffd166", fontSize:9.5, fontWeight:"900", letterSpacing:1, marginBottom:5 }}>💡 HOHMANN TRANSFER</Text>
+            <Text style={{ color:"#eef5ff", fontSize:12, lineHeight:18 }}>
+              A Hohmann transfer uses two engine burns to travel between orbits using the least fuel. First burn raises your orbit to match the target. Second burn circularizes at destination.
+            </Text>
+          </View>
+        </>
+      )}
+
+      {phase === "launch" && (
+        <View style={{ alignItems:"center" }}>
+          {/* Orbit animation */}
+          <View style={{ width:W, height:H, position:"relative", marginBottom:14 }}>
+            {/* Sun */}
+            <View style={{ position:"absolute", left:cx-8, top:cy-8, width:16, height:16, borderRadius:8, backgroundColor:"#ffcc44" }}/>
+            {/* Earth orbit */}
+            <View style={{ position:"absolute", left:cx-earthR, top:cy-earthR, width:earthR*2, height:earthR*2, borderRadius:earthR, borderWidth:1, borderColor:"rgba(77,249,255,0.3)", backgroundColor:"transparent" }}/>
+            {/* Target orbit */}
+            <View style={{ position:"absolute", left:cx-targetR, top:cy-targetR, width:targetR*2, height:targetR*2, borderRadius:targetR, borderWidth:1, borderColor:target.color+"66", backgroundColor:"transparent" }}/>
+            {/* Earth */}
+            <View style={{ position:"absolute", left:cx+earthR-7, top:cy-7, width:14, height:14, borderRadius:7, backgroundColor:"#4488ff" }}/>
+            {/* Target planet */}
+            <View style={{ position:"absolute", left:cx-targetR-7, top:cy-7, width:14, height:14, borderRadius:7, backgroundColor:target.color }}/>
+            {/* Rocket */}
+            <View style={{ position:"absolute", left:rocketX-6, top:rocketY-6, width:12, height:12, borderRadius:6, backgroundColor:"#ffffff", borderWidth:2, borderColor:"#4df9ff" }}/>
+            {/* Progress trail dots */}
+            {[20,40,60,80].map(p => {
+              const a = (p/100)*Math.PI;
+              const rx = cx - ellipseA*Math.cos(a);
+              const ry = cy - ellipseB*Math.sin(a);
+              return p <= animProg ? (
+                <View key={p} style={{ position:"absolute", left:rx-2, top:ry-2, width:4, height:4, borderRadius:2, backgroundColor:"rgba(77,249,255,0.5)" }}/>
+              ) : null;
+            })}
+          </View>
+          <Text style={{ color:"#4df9ff", fontSize:14, fontWeight:"900", marginBottom:4 }}>
+            T+ {Math.round(animProg/100 * transferDays)} days
+          </Text>
+          <Text style={{ color:"#8ab8d8", fontSize:12 }}>{animProg}% of transfer complete…</Text>
+          <View style={{ width:W, height:6, borderRadius:3, backgroundColor:"rgba(255,255,255,0.1)", marginTop:14, overflow:"hidden" }}>
+            <View style={{ width:`${animProg}%` as `${number}%`, height:6, borderRadius:3, backgroundColor:"#4df9ff" }}/>
+          </View>
+        </View>
+      )}
+
+      {phase === "result" && (
+        <View style={{ alignItems:"center", gap:10 }}>
+          <Text style={{ fontSize:64 }}>{score >= 70 ? "🎉" : score >= 40 ? "🛸" : "💥"}</Text>
+          <Text style={{ color:"#eef5ff", fontSize:22, fontWeight:"900" }}>
+            {score >= 70 ? "Mission Success!" : score >= 40 ? "Partial Success" : "Mission Failed"}
+          </Text>
+          <Text style={{ color:"#4df9ff", fontSize:52, fontWeight:"900" }}>{score}</Text>
+          <Text style={{ color:"#8ab8d8", fontSize:12, textAlign:"center" }}>out of 100 pts</Text>
+          <View style={{ backgroundColor:"rgba(4,10,28,0.95)", borderRadius:16, padding:16, gap:8, width:"100%", borderWidth:1, borderColor:"rgba(77,249,255,0.2)" }}>
+            <Text style={{ color:"#4df9ff", fontSize:10, fontWeight:"900", letterSpacing:1 }}>MISSION DEBRIEF</Text>
+            <Text style={{ color:"#eef5ff", fontSize:12.5 }}>Target: Earth → {target.name}</Text>
+            <Text style={{ color:"#8ab8d8", fontSize:12 }}>Transfer duration: {transferDays} days</Text>
+            <Text style={{ color:fuelOk ? "#4dffc3" : "#ff5580", fontSize:12 }}>
+              Fuel used: {fuel}% ({availableDv.toFixed(1)} km/s)
+            </Text>
+            <Text style={{ color:"#8ab8d8", fontSize:12 }}>Required delta-v: {requiredDv.toFixed(1)} km/s</Text>
+            <Text style={{ color:"#ffd166", fontSize:11.5, marginTop:4, lineHeight:17 }}>
+              {score >= 70 ? `Perfect Hohmann transfer! Your spacecraft will reach ${target.name} in ${transferDays} Earth days using optimal fuel.`
+              : score >= 40 ? "You made it, but used more fuel than needed. Try a 60–75% fuel load next time."
+              : `Insufficient delta-v! You needed ${requiredDv.toFixed(1)} km/s. Load more fuel.`}
+            </Text>
+          </View>
+          <Pressable onPress={reset} style={{ borderRadius:14, paddingHorizontal:28, paddingVertical:14, backgroundColor:"rgba(77,249,255,0.14)", borderWidth:1, borderColor:"rgba(77,249,255,0.44)", marginTop:4 }}>
+            <Text style={{ color:"#4df9ff", fontSize:14, fontWeight:"900" }}>🔄  Try Again</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── LAB PANEL ───────────────────────────────────────────────────────────────
+
 function LabPanel({ planet, inputs, setInputs, outcome, activeExperimentId, setActiveExperimentId, onActivateExperiment }: {
   planet: Planet; inputs: LabInputs; setInputs: (i: LabInputs) => void;
   outcome: ReturnType<typeof calculateLabOutcome>;
   activeExperimentId: string | null; setActiveExperimentId: (id: string | null) => void;
   onActivateExperiment: (id: string) => void;
 }) {
+  const [labMode, setLabMode] = useState<"physics" | "rocket">("physics");
   const activeExp = EXPERIMENTS.find(e => e.id === activeExperimentId);
   const expVals   = activeExp ? activeExp.params.reduce<Record<string,number>>((a,p)=>{ a[p.key]=(inputs as Record<string,number>)[p.key]??p.defaultValue; return a; },{}) : {};
   const set = (k: string, v: number) => setInputs({ ...inputs, [k]: v });
@@ -1641,6 +2267,28 @@ function LabPanel({ planet, inputs, setInputs, outcome, activeExperimentId, setA
 
   return (
     <View style={pw.wrap}>
+      {/* Mode switcher */}
+      <View style={{ flexDirection:"row", gap:8, marginHorizontal:16, marginVertical:10 }}>
+        <Pressable onPress={() => setLabMode("physics")} style={{
+          flex:1, paddingVertical:10, borderRadius:14, alignItems:"center",
+          backgroundColor: labMode==="physics" ? "rgba(77,249,255,0.14)" : "rgba(255,255,255,0.05)",
+          borderWidth:1, borderColor: labMode==="physics" ? "rgba(77,249,255,0.5)" : "rgba(255,255,255,0.1)",
+        }}>
+          <Text style={{ fontSize:18, marginBottom:2 }}>🧪</Text>
+          <Text style={{ color: labMode==="physics" ? "#4df9ff" : "#8ab8d8", fontSize:11, fontWeight:"900" }}>Physics Lab</Text>
+        </Pressable>
+        <Pressable onPress={() => setLabMode("rocket")} style={{
+          flex:1, paddingVertical:10, borderRadius:14, alignItems:"center",
+          backgroundColor: labMode==="rocket" ? "rgba(255,100,100,0.14)" : "rgba(255,255,255,0.05)",
+          borderWidth:1, borderColor: labMode==="rocket" ? "rgba(255,100,100,0.5)" : "rgba(255,255,255,0.1)",
+        }}>
+          <Text style={{ fontSize:18, marginBottom:2 }}>🚀</Text>
+          <Text style={{ color: labMode==="rocket" ? "#ff9988" : "#8ab8d8", fontSize:11, fontWeight:"900" }}>Mission Control</Text>
+        </Pressable>
+      </View>
+
+      {labMode === "rocket" ? <RocketLaunchSim /> : (
+      <>
       <View style={lab.header}>
         <View><Text style={lab.title}>🧪  SPACE LAB</Text><Text style={lab.sub}>What happens if…?</Text></View>
         <Pressable onPress={reset} style={lab.resetBtn}><Text style={lab.resetText}>Reset</Text></Pressable>
@@ -1681,6 +2329,8 @@ function LabPanel({ planet, inputs, setInputs, outcome, activeExperimentId, setA
           <LabSlider label="Gravity" unit="×" min={0.1} max={5} step={0.1} value={inputs.gravityScale} onChange={v=>set("gravityScale",v)}/>
           <View style={lab.resultBox}><Text style={lab.resultTitle}>{outcome.headline}</Text><Text style={lab.resultBody}>{outcome.explanation}</Text></View>
         </>
+      )}
+      </>
       )}
     </View>
   );
@@ -1873,303 +2523,330 @@ function td(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: numb
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const ui = StyleSheet.create({
-  topBar: { flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingHorizontal:16,paddingTop:8,paddingBottom:4 },
-  topRight: { flexDirection:"row",gap:7 },
-  appName: { color:C.textSub,fontSize:12,fontWeight:"900",letterSpacing:3 },
-  appSub: { color:C.textMuted,fontSize:9,marginTop:1,letterSpacing:0.5 },
-  glassBtn: { width:40,height:40,borderRadius:14,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(3,8,24,0.8)",borderWidth:1,borderColor:C.border },
-  glassBtnSm: { width:34,height:34,borderRadius:10 },
-  glassBtnText: { color:C.text,fontSize:17 },
-  floatingCard: { position:"absolute",top:88,left:14,right:14,backgroundColor:"rgba(3,7,20,0.95)",borderRadius:18,borderWidth:1,borderColor:C.borderGlow,padding:14 },
-  fcRow: { flexDirection:"row",alignItems:"center",gap:10,marginBottom:8 },
-  fcEmoji: { fontSize:28 },
-  fcName: { color:C.text,fontSize:17,fontWeight:"900" },
-  fcNick: { color:C.textSub,fontSize:9,fontWeight:"800",letterSpacing:1.5,marginTop:2 },
-  fcFact: { color:C.textSub,fontSize:12,lineHeight:17,marginBottom:10,fontStyle:"italic" },
+  topBar: { flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingHorizontal:18,paddingTop:10,paddingBottom:8,backgroundColor:"rgba(1,2,10,0.82)",borderBottomWidth:1,borderBottomColor:"rgba(77,249,255,0.07)" },
+  topRight: { flexDirection:"row",gap:8 },
+  appName: { color:"#eef5ff",fontSize:15,fontWeight:"900",letterSpacing:2 },
+  appSub: { color:C.textMuted,fontSize:9.5,marginTop:2 },
+  glassBtn: { width:44,height:44,borderRadius:13,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(8,16,36,0.90)",borderWidth:1,borderColor:"rgba(140,200,255,0.22)" },
+  glassBtnSm: { width:36,height:36,borderRadius:10 },
+  glassBtnText: { color:"#eef5ff",fontSize:18 },
+  floatingCard: { position:"absolute",top:90,left:14,right:14,backgroundColor:"rgba(3,6,18,0.98)",borderRadius:20,borderWidth:1,borderColor:"rgba(77,249,255,0.42)",overflow:"hidden" },
+  fcGradHeader: { padding:15,borderBottomWidth:1,borderBottomColor:"rgba(255,255,255,0.09)" },
+  fcBody: { padding:15 },
+  fcRow: { flexDirection:"row",alignItems:"center",gap:12 },
+  fcEmoji: { fontSize:34 },
+  fcName: { color:"#f0f6ff",fontSize:18,fontWeight:"900" },
+  fcNick: { color:"rgba(160,210,240,0.82)",fontSize:9.5,fontWeight:"800",letterSpacing:1,marginTop:3 },
+  fcFact: { color:"#8ab8d8",fontSize:12.5,lineHeight:19,marginBottom:12,fontStyle:"italic" },
   fcBtns: { flexDirection:"row",gap:8 },
-  fcBtn: { flex:1,height:36,alignItems:"center",justifyContent:"center",borderRadius:10,backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:C.border },
-  fcBtnCyan: { borderColor:"rgba(77,249,255,0.4)",backgroundColor:"rgba(77,249,255,0.08)" },
-  fcBtnText: { color:C.text,fontSize:12,fontWeight:"800" },
-  statusChip: { flexDirection:"row",alignItems:"center",gap:5,paddingHorizontal:8,paddingVertical:3,borderRadius:8,borderWidth:1,backgroundColor:"rgba(255,255,255,0.04)",alignSelf:"flex-start" },
-  statusDot: { width:6,height:6,borderRadius:3 },
-  statusText: { fontSize:9,fontWeight:"900" },
-  earthBadge: { position:"absolute",top:90,alignSelf:"center",backgroundColor:"rgba(3,7,20,0.85)",borderRadius:20,paddingHorizontal:16,paddingVertical:8,borderWidth:1,borderColor:"rgba(26,109,255,0.4)" },
-  earthBadgeText: { color:C.text,fontSize:13,fontWeight:"900",textAlign:"center" },
-  earthBadgeSub: { color:C.textSub,fontSize:10,textAlign:"center",marginTop:2 },
-  sheet: { position:"absolute",bottom:0,left:0,right:0,backgroundColor:C.panel,borderTopLeftRadius:22,borderTopRightRadius:22,borderTopWidth:1,borderLeftWidth:1,borderRightWidth:1,borderColor:C.border,overflow:"hidden" },
-  handleArea: { paddingTop:10,paddingHorizontal:16,paddingBottom:6 },
-  handle: { width:38,height:4,borderRadius:2,backgroundColor:C.textMuted,alignSelf:"center",marginBottom:8 },
-  handleRow: { flexDirection:"row",alignItems:"center",gap:10 },
-  handleEmoji: { fontSize:22 },
-  handlePlanet: { color:C.text,fontSize:15,fontWeight:"900" },
-  handleNick: { color:C.textSub,fontSize:10,marginTop:1 },
-  handleToggle: { width:30,height:30,borderRadius:10,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(255,255,255,0.06)",borderWidth:1,borderColor:C.border },
-  handleToggleText: { color:C.textSub,fontSize:15,fontWeight:"900" },
-  tabScroll: { borderBottomWidth:1,borderBottomColor:C.border },
-  tabRail: { gap:6,paddingHorizontal:12,paddingVertical:7 },
-  tab: { flexDirection:"row",alignItems:"center",gap:5,paddingHorizontal:11,paddingVertical:7,borderRadius:20,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
-  tabActive: { backgroundColor:"rgba(77,249,255,0.12)",borderColor:C.borderGlow },
-  tabEmoji: { fontSize:13 },
-  tabLabel: { color:C.textSub,fontSize:11,fontWeight:"800" },
-  tabLabelActive: { color:C.cyan },
+  fcBtn: { flex:1,minHeight:42,alignItems:"center",justifyContent:"center",borderRadius:12,backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:"rgba(160,200,255,0.18)",paddingHorizontal:10 },
+  fcBtnCyan: { borderColor:"rgba(77,249,255,0.46)",backgroundColor:"rgba(77,249,255,0.11)" },
+  fcBtnText: { color:"#f0f6ff",fontSize:12.5,fontWeight:"900" },
+  statusChip: { flexDirection:"row",alignItems:"center",gap:6,paddingHorizontal:9,paddingVertical:4,borderRadius:10,borderWidth:1,backgroundColor:"rgba(255,255,255,0.05)",alignSelf:"flex-start" },
+  statusDot: { width:7,height:7,borderRadius:3.5 },
+  statusText: { fontSize:9,fontWeight:"900",letterSpacing:0.5 },
+  earthBadge: { position:"absolute",top:90,alignSelf:"center",backgroundColor:"rgba(3,8,22,0.94)",borderRadius:18,paddingHorizontal:20,paddingVertical:10,borderWidth:1,borderColor:"rgba(77,249,255,0.36)" },
+  earthBadgeText: { color:"#eef5ff",fontSize:14,fontWeight:"900",textAlign:"center" },
+  earthBadgeSub: { color:"#8ab8d8",fontSize:10.5,textAlign:"center",marginTop:3 },
+  sheet: { position:"absolute",bottom:0,left:0,right:0,backgroundColor:"rgba(2,5,16,0.99)",borderTopLeftRadius:26,borderTopRightRadius:26,borderTopWidth:1,borderLeftWidth:1,borderRightWidth:1,borderColor:"rgba(77,249,255,0.14)",overflow:"hidden" },
+  handleArea: { paddingTop:12,paddingHorizontal:16,paddingBottom:6 },
+  handle: { width:58,height:5,borderRadius:3,backgroundColor:"rgba(77,249,255,0.30)",alignSelf:"center",marginBottom:10 },
+  handleRow: { flexDirection:"row",alignItems:"center",gap:12 },
+  handleEmoji: { fontSize:24 },
+  handlePlanet: { color:"#eef5ff",fontSize:16,fontWeight:"900" },
+  handleNick: { color:C.textMuted,fontSize:10.5,marginTop:2 },
+  handleToggle: { width:32,height:32,borderRadius:11,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:"rgba(120,180,255,0.22)" },
+  handleToggleText: { color:C.textSub,fontSize:16,fontWeight:"900" },
+  tabScroll: { borderBottomWidth:1,borderBottomColor:"rgba(77,249,255,0.08)" },
+  tabRail: { gap:7,paddingHorizontal:14,paddingVertical:8 },
+  tab: { flexDirection:"row",alignItems:"center",gap:6,paddingHorizontal:14,paddingVertical:9,borderRadius:13,backgroundColor:"rgba(255,255,255,0.045)",borderWidth:1,borderColor:"rgba(100,155,255,0.14)" },
+  tabActive: { backgroundColor:"rgba(77,249,255,0.13)",borderColor:"rgba(77,249,255,0.52)" },
+  tabEmoji: { fontSize:15 },
+  tabLabel: { color:C.textMuted,fontSize:11.5,fontWeight:"800" },
+  tabLabelActive: { color:"#4df9ff",fontWeight:"900" },
+  // ── 2×4 grid tabs ──────────────────────────────────────────
+  tabGrid: {
+    flexDirection:"row", flexWrap:"wrap",
+    borderBottomWidth:1, borderBottomColor:"rgba(77,249,255,0.09)",
+    paddingHorizontal:8, paddingTop:6, paddingBottom:6,
+  },
+  tabTile: {
+    width:"25%", alignItems:"center", justifyContent:"center",
+    paddingVertical:8, paddingHorizontal:2, borderRadius:12,
+    backgroundColor:"transparent", position:"relative",
+  },
+  tabTileActive: {
+    backgroundColor:"rgba(77,249,255,0.10)",
+  },
+  tabTileEmoji: { fontSize:18, marginBottom:3 },
+  tabTileEmojiActive: {},
+  tabTileLabel: {
+    color:C.textMuted, fontSize:9.5, fontWeight:"800",
+    textAlign:"center", letterSpacing:0.3,
+  },
+  tabTileLabelActive: { color:"#4df9ff", fontWeight:"900" },
+  tabTileDot: {
+    position:"absolute", bottom:3, left:"50%", marginLeft:-3,
+    width:6, height:6, borderRadius:3, backgroundColor:"#4df9ff",
+  },
   sheetContent: { flex:1 },
 });
 
 const hs = StyleSheet.create({
-  scroll: { paddingHorizontal:22,paddingTop:52,paddingBottom:44 },
-  eyebrow: { color:C.textSub,fontSize:11,fontWeight:"900",letterSpacing:3,marginBottom:10 },
-  headline: { color:C.text,fontSize:44,fontWeight:"900",letterSpacing:-1,lineHeight:48,marginBottom:14 },
-  tagline: { color:C.textSub,fontSize:15,lineHeight:23,marginBottom:20 },
-  agencyFlag: { alignItems:"center",paddingVertical:8,paddingHorizontal:12,borderRadius:12,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
-  agencyFlagText: { fontSize:20 },
-  agencyFlagLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",marginTop:3 },
-  statsRow: { flexDirection:"row",gap:8,marginBottom:22 },
-  statChip: { flex:1,alignItems:"center",paddingVertical:8,backgroundColor:"rgba(255,255,255,0.04)",borderRadius:12,borderWidth:1,borderColor:C.border },
-  statN: { color:C.cyan,fontSize:18,fontWeight:"900" },
-  statL: { color:C.textSub,fontSize:9,marginTop:2,fontWeight:"700" },
-  ctaWrap: { alignSelf:"flex-start",borderRadius:30,overflow:"hidden" },
-  cta: { paddingHorizontal:28,paddingVertical:16,borderRadius:30 },
-  ctaText: { color:"#fff",fontSize:16,fontWeight:"900" },
-  gridLabel: { color:C.textMuted,fontSize:10,fontWeight:"900",letterSpacing:2.5,marginBottom:12 },
-  grid: { flexDirection:"row",flexWrap:"wrap",gap:10,marginBottom:28 },
-  tile: { width:(SW-54)/2,borderRadius:16,overflow:"hidden" },
-  tileGrad: { padding:16,minHeight:100,justifyContent:"flex-end" },
-  tileEmoji: { fontSize:26,marginBottom:8 },
-  tileLabel: { color:C.text,fontSize:14,fontWeight:"900" },
-  tileSub: { color:C.textSub,fontSize:10,marginTop:2 },
-  killFeat: { borderRadius:16,borderWidth:1,borderColor:"rgba(77,249,255,0.25)",backgroundColor:"rgba(3,10,30,0.85)",padding:18 },
-  killFeatTag: { color:C.cyan,fontSize:10,fontWeight:"900",letterSpacing:2,marginBottom:6 },
-  killFeatTitle: { color:C.text,fontSize:16,fontWeight:"900",marginBottom:8 },
-  killFeatText: { color:C.textSub,fontSize:13,lineHeight:20,marginBottom:10 },
-  killFeatCta: { color:C.cyan,fontWeight:"900",fontSize:13 },
-  nebula: { position:"absolute",width:260,height:260,borderRadius:130,opacity:0.3,transform:[{scaleX:1.7}] },
+  scroll: { paddingHorizontal:22,paddingTop:52,paddingBottom:48 },
+  eyebrow: { color:"#4df9ff",fontSize:11,fontWeight:"900",letterSpacing:2.5,marginBottom:14 },
+  headline: { color:"#eef5ff",fontSize:44,fontWeight:"900",letterSpacing:-1,lineHeight:50,marginBottom:16 },
+  tagline: { color:"#8ab8d8",fontSize:15.5,lineHeight:24,marginBottom:26 },
+  agencyFlag: { alignItems:"center",paddingVertical:10,paddingHorizontal:14,borderRadius:14,backgroundColor:"rgba(255,255,255,0.06)",borderWidth:1,borderColor:"rgba(120,170,255,0.20)" },
+  agencyFlagText: { fontSize:22 },
+  agencyFlagLabel: { color:C.textMuted,fontSize:9.5,fontWeight:"900",marginTop:4,letterSpacing:0.5 },
+  statsRow: { flexDirection:"row",gap:8,marginBottom:26 },
+  statChip: { flex:1,alignItems:"center",paddingVertical:12,backgroundColor:"rgba(255,255,255,0.058)",borderRadius:14,borderWidth:1,borderColor:"rgba(77,249,255,0.18)" },
+  statN: { color:"#4df9ff",fontSize:21,fontWeight:"900" },
+  statL: { color:"#8ab8d8",fontSize:9,marginTop:3,fontWeight:"700",letterSpacing:0.3 },
+  ctaWrap: { alignSelf:"flex-start",borderRadius:18,overflow:"hidden" },
+  cta: { paddingHorizontal:32,paddingVertical:17,borderRadius:18 },
+  ctaText: { color:"#fff",fontSize:17,fontWeight:"900" },
+  gridLabel: { color:C.textMuted,fontSize:10,fontWeight:"900",letterSpacing:2,marginBottom:14 },
+  grid: { flexDirection:"row",flexWrap:"wrap",gap:10,marginBottom:32 },
+  tile: { width:(SW-54)/2,borderRadius:18,overflow:"hidden",borderWidth:1,borderColor:"rgba(120,170,255,0.18)" },
+  tileGrad: { padding:18,minHeight:112,justifyContent:"flex-end" },
+  tileEmoji: { fontSize:30,marginBottom:10 },
+  tileLabel: { color:"#eef5ff",fontSize:15,fontWeight:"900" },
+  tileSub: { color:"rgba(140,190,220,0.72)",fontSize:10.5,marginTop:3 },
+  killFeat: { borderRadius:18,borderWidth:1,borderColor:"rgba(77,249,255,0.22)",backgroundColor:"rgba(5,12,30,0.92)",padding:20 },
+  killFeatTag: { color:"#4df9ff",fontSize:10,fontWeight:"900",letterSpacing:1.5,marginBottom:8 },
+  killFeatTitle: { color:"#eef5ff",fontSize:17,fontWeight:"900",marginBottom:9 },
+  killFeatText: { color:"#8ab8d8",fontSize:13.5,lineHeight:21,marginBottom:12 },
+  killFeatCta: { color:"#4df9ff",fontWeight:"900",fontSize:13.5 },
+  nebula: { position:"absolute",width:280,height:280,borderRadius:140,opacity:0.20,transform:[{scaleX:1.8}] },
 });
 
 const pw = StyleSheet.create({
-  wrap: { paddingHorizontal:14,paddingTop:10 },
-  hero: { flexDirection:"row",alignItems:"center",gap:12,borderRadius:16,padding:14,marginBottom:10,overflow:"hidden" },
-  heroEmoji: { fontSize:28 },
-  heroName: { color:C.text,fontSize:20,fontWeight:"900" },
-  heroNick: { color:C.textSub,fontSize:9,fontWeight:"800",letterSpacing:1.5,marginTop:2 },
-  factCard: { backgroundColor:"rgba(77,249,255,0.05)",borderRadius:12,borderWidth:1,borderColor:"rgba(77,249,255,0.14)",padding:12,marginBottom:10 },
-  factQuote: { color:C.text,fontSize:13,lineHeight:20,fontStyle:"italic" },
-  factTap: { color:C.textSub,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginTop:7 },
-  statsRow: { flexDirection:"row",gap:6,marginBottom:6 },
-  stat: { flex:1,borderRadius:10,backgroundColor:"rgba(255,255,255,0.04)",borderTopWidth:2,padding:9 },
-  statVal: { fontSize:13,fontWeight:"900" },
-  statL: { color:C.textMuted,fontSize:9,marginTop:2,textTransform:"uppercase",fontWeight:"700" },
-  atmo: { backgroundColor:"rgba(255,255,255,0.03)",borderRadius:10,padding:10,marginBottom:4 },
-  atmoLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:4 },
-  atmoText: { color:C.textSub,fontSize:12 },
-  chip: { flexDirection:"row",alignItems:"center",gap:5,borderRadius:20,paddingHorizontal:10,paddingVertical:7,backgroundColor:"rgba(255,255,255,0.05)",borderWidth:1,borderColor:C.border },
-  chipActive: { borderColor:C.borderGlow,backgroundColor:"rgba(77,249,255,0.08)" },
+  wrap: { paddingHorizontal:16,paddingTop:12 },
+  hero: { flexDirection:"row",alignItems:"center",gap:14,borderRadius:18,padding:17,marginBottom:12,overflow:"hidden",borderWidth:1,borderColor:"rgba(255,255,255,0.12)" },
+  heroEmoji: { fontSize:34 },
+  heroName: { color:"#eef5ff",fontSize:21,fontWeight:"900" },
+  heroNick: { color:"rgba(140,200,230,0.82)",fontSize:10,fontWeight:"800",letterSpacing:1,marginTop:4 },
+  factCard: { backgroundColor:"rgba(77,249,255,0.07)",borderRadius:14,borderWidth:1,borderColor:"rgba(77,249,255,0.26)",padding:15,marginBottom:12 },
+  factQuote: { color:"#eef5ff",fontSize:14,lineHeight:22,fontStyle:"italic" },
+  factTap: { color:"#4d6e8a",fontSize:9.5,fontWeight:"900",letterSpacing:1,marginTop:8 },
+  statsRow: { flexDirection:"row",gap:6,marginBottom:7 },
+  stat: { flex:1,borderRadius:13,backgroundColor:"rgba(255,255,255,0.058)",borderTopWidth:2.5,padding:11,minHeight:62 },
+  statVal: { fontSize:14,fontWeight:"900" },
+  statL: { color:C.textMuted,fontSize:9,marginTop:3,textTransform:"uppercase",fontWeight:"700",letterSpacing:0.3 },
+  atmo: { backgroundColor:"rgba(255,255,255,0.050)",borderRadius:14,padding:13,marginBottom:7,borderWidth:1,borderColor:"rgba(255,255,255,0.07)" },
+  atmoLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1,marginBottom:6 },
+  atmoText: { color:"#8ab8d8",fontSize:12.5,lineHeight:19 },
+  chip: { flexDirection:"row",alignItems:"center",gap:6,borderRadius:13,paddingHorizontal:12,paddingVertical:9,backgroundColor:"rgba(255,255,255,0.058)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",minHeight:38 },
+  chipActive: { borderColor:"rgba(77,249,255,0.54)",backgroundColor:"rgba(77,249,255,0.12)" },
   chipDot: { width:8,height:8,borderRadius:4 },
-  chipText: { color:C.textSub,fontSize:11,fontWeight:"800" },
-  speedRow: { marginTop:14,gap:6 },
-  speedLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5 },
+  chipText: { color:"#8ab8d8",fontSize:11.5,fontWeight:"800" },
+  speedRow: { marginTop:16,gap:7 },
+  speedLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1 },
   speedBtns: { flexDirection:"row",gap:6 },
-  speedBtn: { flex:1,height:34,alignItems:"center",justifyContent:"center",borderRadius:8,backgroundColor:"rgba(255,255,255,0.06)",borderWidth:1,borderColor:C.border },
-  speedBtnActive: { backgroundColor:"rgba(77,249,255,0.18)",borderColor:C.borderGlow },
-  speedBtnT: { color:C.textSub,fontSize:13,fontWeight:"900" },
-  speedBtnTActive: { color:C.cyan },
+  speedBtn: { flex:1,height:40,alignItems:"center",justifyContent:"center",borderRadius:12,backgroundColor:"rgba(255,255,255,0.06)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)" },
+  speedBtnActive: { backgroundColor:"rgba(77,249,255,0.18)",borderColor:"rgba(77,249,255,0.54)" },
+  speedBtnT: { color:"#8ab8d8",fontSize:14,fontWeight:"900" },
+  speedBtnTActive: { color:"#4df9ff" },
 });
 
 const eh = StyleSheet.create({
-  selectedCard: { backgroundColor:"rgba(6,14,38,0.95)",borderRadius:16,borderWidth:1,borderColor:C.borderGlow,padding:14,marginBottom:14 },
-  selectedTop: { flexDirection:"row",gap:12,alignItems:"flex-start",marginBottom:10 },
-  selectedEmoji: { fontSize:30 },
-  selectedName: { color:C.text,fontSize:16,fontWeight:"900" },
-  metaRow: { flexDirection:"row",gap:8,marginBottom:8 },
-  metaItem: { flex:1 },
-  metaL: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:2 },
-  metaV: { color:C.text,fontSize:12,fontWeight:"700" },
-  headline: { color:C.gold,fontSize:13,fontWeight:"800",marginBottom:8 },
-  story: { color:C.textSub,fontSize:12,lineHeight:18,marginBottom:10 },
-  discovLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:6 },
-  discovItem: { flexDirection:"row",gap:8,marginBottom:5 },
-  discovBullet: { color:C.cyan,fontSize:12,fontWeight:"900",width:12 },
-  discovText: { color:C.text,fontSize:12,flex:1,lineHeight:17 },
-  satRow: { flexDirection:"row",alignItems:"center",gap:10,padding:10,borderRadius:12,marginBottom:7,backgroundColor:"rgba(255,255,255,0.03)",borderWidth:1,borderColor:C.border },
-  satRowActive: { backgroundColor:"rgba(77,249,255,0.08)",borderColor:C.borderGlow },
-  satEmoji: { fontSize:20 },
-  satName: { color:C.text,fontSize:13,fontWeight:"800" },
-  satMeta: { color:C.textSub,fontSize:10,marginTop:2 },
-  satStatus: { paddingHorizontal:7,paddingVertical:3,borderRadius:8,borderWidth:1 },
-  satStatusText: { fontSize:9,fontWeight:"900" },
+  selectedCard: { backgroundColor:"rgba(4,10,28,0.97)",borderRadius:18,borderWidth:1,borderColor:"rgba(77,249,255,0.38)",padding:16,marginBottom:16 },
+  selectedTop: { flexDirection:"row",gap:14,alignItems:"flex-start",marginBottom:12 },
+  selectedEmoji: { fontSize:36 },
+  selectedName: { color:"#eef5ff",fontSize:17,fontWeight:"900" },
+  metaRow: { flexDirection:"row",gap:8,marginBottom:9 },
+  metaItem: { flex:1,backgroundColor:"rgba(255,255,255,0.04)",borderRadius:12,padding:9,borderWidth:1,borderColor:"rgba(255,255,255,0.055)" },
+  metaL: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:0.5,marginBottom:3 },
+  metaV: { color:"#eef5ff",fontSize:12.5,fontWeight:"700" },
+  headline: { color:"#ffd166",fontSize:13.5,fontWeight:"900",marginBottom:9 },
+  story: { color:"#8ab8d8",fontSize:12.5,lineHeight:19,marginBottom:11 },
+  discovLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:0.5,marginBottom:7 },
+  discovItem: { flexDirection:"row",gap:9,marginBottom:6 },
+  discovBullet: { color:"#4df9ff",fontSize:12.5,fontWeight:"900",width:14 },
+  discovText: { color:"#eef5ff",fontSize:12.5,flex:1,lineHeight:18 },
+  satRow: { flexDirection:"row",alignItems:"center",gap:10,padding:12,borderRadius:14,marginBottom:8,backgroundColor:"rgba(255,255,255,0.050)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",minHeight:62 },
+  satRowActive: { backgroundColor:"rgba(77,249,255,0.10)",borderColor:"rgba(77,249,255,0.48)" },
+  satEmoji: { fontSize:22 },
+  satName: { color:"#eef5ff",fontSize:13.5,fontWeight:"800" },
+  satMeta: { color:"#8ab8d8",fontSize:10.5,marginTop:2 },
+  satStatus: { paddingHorizontal:8,paddingVertical:4,borderRadius:10,borderWidth:1 },
+  satStatusText: { fontSize:9.5,fontWeight:"900" },
 });
 
 const ag = StyleSheet.create({
-  chip: { flexDirection:"row",alignItems:"center",gap:6,paddingHorizontal:10,paddingVertical:8,borderRadius:20,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1 },
+  chip: { flexDirection:"row",alignItems:"center",gap:7,paddingHorizontal:12,paddingVertical:10,borderRadius:14,backgroundColor:"rgba(255,255,255,0.058)",borderWidth:1 },
   chipActive: { },
-  chipFlag: { fontSize:16 },
-  chipName: { fontSize:11,fontWeight:"900" },
-  card: { borderRadius:18,borderWidth:1,overflow:"hidden",marginBottom:8 },
-  cardGrad: { padding:18 },
-  cardTop: { flexDirection:"row",gap:14,alignItems:"flex-start",marginBottom:14 },
-  cardFlag: { fontSize:40 },
-  cardName: { color:C.text,fontSize:24,fontWeight:"900" },
-  cardCountry: { fontSize:11,fontWeight:"800",marginTop:2 },
-  cardFull: { color:C.textSub,fontSize:10,marginTop:4 },
-  tagline: { color:C.textSub,fontSize:13,fontStyle:"italic",marginBottom:14 },
-  statsGrid: { flexDirection:"row",gap:0,borderRadius:12,overflow:"hidden",borderWidth:1,borderColor:C.border,marginBottom:10 },
-  statBox: { flex:1,alignItems:"center",paddingVertical:10,borderRightWidth:1,borderRightColor:C.border },
-  statN: { fontSize:18,fontWeight:"900" },
-  statL: { color:C.textSub,fontSize:9,marginTop:2,fontWeight:"700" },
-  budgetRow: { color:C.textSub,fontSize:12,marginBottom:12 },
-  story: { color:C.textSub,fontSize:13,lineHeight:20,marginBottom:12 },
-  achLabel: { color:C.gold,fontSize:10,fontWeight:"900",letterSpacing:1.5,marginBottom:8 },
-  achItem: { flexDirection:"row",gap:8,marginBottom:6 },
-  achBullet: { fontSize:12,fontWeight:"900",width:14 },
-  achText: { color:C.text,fontSize:12,flex:1,lineHeight:17 },
-  jumpBtn: { borderRadius:12,borderWidth:1,padding:12,alignItems:"center",marginTop:14 },
-  jumpBtnText: { fontSize:13,fontWeight:"900" },
+  chipFlag: { fontSize:18 },
+  chipName: { fontSize:11.5,fontWeight:"900" },
+  card: { borderRadius:18,borderWidth:1,overflow:"hidden",marginBottom:10,backgroundColor:"rgba(5,10,24,0.78)" },
+  cardGrad: { padding:20 },
+  cardTop: { flexDirection:"row",gap:16,alignItems:"flex-start",marginBottom:16 },
+  cardFlag: { fontSize:46 },
+  cardName: { color:"#eef5ff",fontSize:26,fontWeight:"900" },
+  cardCountry: { fontSize:11.5,fontWeight:"800",marginTop:3 },
+  cardFull: { color:"#8ab8d8",fontSize:10.5,marginTop:5 },
+  tagline: { color:"#8ab8d8",fontSize:13.5,fontStyle:"italic",marginBottom:16 },
+  statsGrid: { flexDirection:"row",gap:0,borderRadius:14,overflow:"hidden",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",marginBottom:12,backgroundColor:"rgba(255,255,255,0.040)" },
+  statBox: { flex:1,alignItems:"center",paddingVertical:12,borderRightWidth:1,borderRightColor:"rgba(110,165,255,0.12)" },
+  statN: { fontSize:20,fontWeight:"900" },
+  statL: { color:"#8ab8d8",fontSize:9,marginTop:3,fontWeight:"700" },
+  budgetRow: { color:"#8ab8d8",fontSize:12.5,marginBottom:14 },
+  story: { color:"#8ab8d8",fontSize:13.5,lineHeight:21,marginBottom:14 },
+  achLabel: { color:"#ffd166",fontSize:10,fontWeight:"900",letterSpacing:1,marginBottom:10 },
+  achItem: { flexDirection:"row",gap:9,marginBottom:7 },
+  achBullet: { fontSize:12.5,fontWeight:"900",width:16 },
+  achText: { color:"#eef5ff",fontSize:12.5,flex:1,lineHeight:18 },
+  jumpBtn: { borderRadius:14,borderWidth:1,padding:14,alignItems:"center",marginTop:16 },
+  jumpBtnText: { fontSize:13.5,fontWeight:"900" },
 });
 
 const ms2 = StyleSheet.create({
-  card: { borderRadius:16,padding:16,borderWidth:1,borderColor:"rgba(77,149,255,0.2)" },
-  cardTop: { flexDirection:"row",gap:12,alignItems:"flex-start",marginBottom:12 },
-  cardEmoji: { fontSize:32 },
-  cardName: { color:C.text,fontSize:17,fontWeight:"900",marginBottom:6 },
-  badges: { flexDirection:"row",gap:6,flexWrap:"wrap" },
-  badge: { paddingHorizontal:8,paddingVertical:3,borderRadius:6,borderWidth:1,backgroundColor:"rgba(255,255,255,0.04)" },
-  badgeT: { fontSize:10,fontWeight:"900" },
-  infoRow: { flexDirection:"row",gap:12,marginBottom:10 },
+  card: { borderRadius:18,padding:18,borderWidth:1,borderColor:"rgba(77,249,255,0.22)",backgroundColor:"rgba(4,10,26,0.90)" },
+  cardTop: { flexDirection:"row",gap:14,alignItems:"flex-start",marginBottom:14 },
+  cardEmoji: { fontSize:38 },
+  cardName: { color:"#eef5ff",fontSize:18,fontWeight:"900",marginBottom:7 },
+  badges: { flexDirection:"row",gap:7,flexWrap:"wrap" },
+  badge: { paddingHorizontal:9,paddingVertical:4,borderRadius:8,borderWidth:1,backgroundColor:"rgba(255,255,255,0.05)" },
+  badgeT: { fontSize:10.5,fontWeight:"900" },
+  infoRow: { flexDirection:"row",gap:14,marginBottom:12 },
   info: { flex:1 },
-  infoL: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:3 },
-  infoV: { color:C.text,fontSize:13,fontWeight:"700" },
-  highlight: { color:C.gold,fontSize:13,fontWeight:"800",marginBottom:8 },
-  story: { color:C.textSub,fontSize:12,lineHeight:19 },
+  infoL: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:0.5,marginBottom:4 },
+  infoV: { color:"#eef5ff",fontSize:14,fontWeight:"700" },
+  highlight: { color:"#ffd166",fontSize:13.5,fontWeight:"800",marginBottom:9 },
+  story: { color:"#8ab8d8",fontSize:12.5,lineHeight:20 },
 });
 
 const tl = StyleSheet.create({
-  detail: { backgroundColor:"rgba(4,10,28,0.95)",borderRadius:16,borderWidth:1,padding:14,marginBottom:16 },
-  detailTop: { flexDirection:"row",gap:10,alignItems:"flex-start",marginBottom:8 },
-  detailEmoji: { fontSize:24 },
-  detailTitle: { color:C.text,fontSize:15,fontWeight:"900" },
-  detailCat: { fontSize:9,fontWeight:"900",letterSpacing:1.5,marginTop:3 },
-  detailDesc: { color:C.textSub,fontSize:12,lineHeight:19,marginBottom:10 },
-  significance: { borderRadius:10,borderWidth:1,padding:10 },
-  sigLabel: { fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:4 },
-  sigText: { color:C.text,fontSize:13,fontWeight:"700" },
-  row: { flexDirection:"row",alignItems:"flex-start",gap:10,marginBottom:4,paddingVertical:6,paddingHorizontal:8,borderRadius:12 },
-  rowActive: { backgroundColor:"rgba(77,249,255,0.06)",borderWidth:1,borderColor:C.borderGlow },
-  yearCol: { width:38 },
-  year: { color:C.textMuted,fontSize:10,fontWeight:"900" },
-  dot: { width:10,height:10,borderRadius:5,marginTop:3,flexShrink:0 },
-  line: { position:"absolute",left:60,top:20,width:1.5,backgroundColor:C.border },
-  content: { flex:1,flexDirection:"row",alignItems:"flex-start",gap:8 },
-  eventEmoji: { fontSize:20 },
-  eventTitle: { color:C.text,fontSize:13,fontWeight:"800",flex:1 },
-  eventMeta: { color:C.textSub,fontSize:10,marginTop:2 },
-  catBadge: { paddingHorizontal:7,paddingVertical:3,borderRadius:8,borderWidth:1 },
-  catText: { fontSize:8,fontWeight:"900" },
+  detail: { backgroundColor:"rgba(8,16,38,0.97)",borderRadius:18,borderWidth:1,padding:16,marginBottom:18 },
+  detailTop: { flexDirection:"row",gap:12,alignItems:"flex-start",marginBottom:10 },
+  detailEmoji: { fontSize:28 },
+  detailTitle: { color:"#eef5ff",fontSize:16,fontWeight:"900" },
+  detailCat: { fontSize:9.5,fontWeight:"900",letterSpacing:0.5,marginTop:3 },
+  detailDesc: { color:"#8ab8d8",fontSize:12.5,lineHeight:20,marginBottom:12 },
+  significance: { borderRadius:14,borderWidth:1,padding:13,backgroundColor:"rgba(255,255,255,0.040)" },
+  sigLabel: { fontSize:9.5,fontWeight:"900",letterSpacing:0.5,marginBottom:5 },
+  sigText: { color:"#eef5ff",fontSize:13.5,fontWeight:"700" },
+  row: { flexDirection:"row",alignItems:"flex-start",gap:10,marginBottom:0,paddingVertical:10,paddingHorizontal:10,borderRadius:14 },
+  rowActive: { backgroundColor:"rgba(77,249,255,0.08)",borderWidth:1,borderColor:"rgba(77,249,255,0.36)" },
+  yearCol: { width:42 },
+  year: { color:C.textMuted,fontSize:10,fontWeight:"900",letterSpacing:0.5 },
+  dot: { width:12,height:12,borderRadius:6,marginTop:2,flexShrink:0 },
+  line: { position:"absolute",left:62,top:22,width:1.5,backgroundColor:"rgba(110,165,255,0.22)" },
+  content: { flex:1,flexDirection:"row",alignItems:"flex-start",gap:9 },
+  eventEmoji: { fontSize:22 },
+  eventTitle: { color:"#eef5ff",fontSize:13.5,fontWeight:"800",flex:1 },
+  eventMeta: { color:"#8ab8d8",fontSize:10.5,marginTop:2 },
+  catBadge: { paddingHorizontal:8,paddingVertical:4,borderRadius:9,borderWidth:1 },
+  catText: { fontSize:8.5,fontWeight:"900" },
 });
 
 const lab = StyleSheet.create({
-  header: { flexDirection:"row",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12 },
-  title: { color:C.text,fontSize:17,fontWeight:"900" },
-  sub: { color:C.textSub,fontSize:12,marginTop:2,fontStyle:"italic" },
-  resetBtn: { paddingHorizontal:12,paddingVertical:6,borderRadius:8,backgroundColor:"rgba(255,255,255,0.06)",borderWidth:1,borderColor:C.border },
-  resetText: { color:C.textSub,fontSize:12,fontWeight:"800" },
-  expCard: { width:135,borderRadius:14,padding:12,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
-  expCardActive: { backgroundColor:"rgba(77,249,255,0.1)",borderColor:C.borderGlow },
-  expEmoji: { fontSize:20,marginBottom:5 },
-  expTitle: { color:C.text,fontSize:11,fontWeight:"900" },
-  expSub: { color:C.textSub,fontSize:9,marginTop:3,lineHeight:13 },
-  activeHeader: { marginBottom:10 },
-  activeName: { color:C.text,fontSize:14,fontWeight:"900" },
-  activeSub: { color:C.textSub,fontSize:11,marginTop:2 },
-  formulaBox: { backgroundColor:"rgba(155,77,255,0.08)",borderRadius:10,borderWidth:1,borderColor:"rgba(155,77,255,0.25)",padding:10,marginBottom:8 },
-  formulaLabel: { color:C.violet,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:4 },
-  formula: { color:C.text,fontSize:12,fontFamily:"monospace" },
-  liveBox: { backgroundColor:"rgba(77,249,255,0.06)",borderRadius:10,borderWidth:1,borderColor:"rgba(77,249,255,0.18)",padding:10,marginBottom:8 },
-  liveLabel: { color:C.cyan,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:4 },
-  liveText: { color:C.text,fontSize:12,lineHeight:18 },
-  compareRow: { flexDirection:"row",alignItems:"center",gap:8,marginBottom:10 },
-  compareBox: { flex:1,borderRadius:10,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border,padding:10 },
-  compareBoxAfter: { backgroundColor:"rgba(77,249,255,0.06)",borderColor:"rgba(77,249,255,0.28)" },
-  compareTag: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:5 },
-  compareVal: { color:C.text,fontSize:13,fontWeight:"900" },
-  compareUnit: { color:C.textMuted,fontSize:9,marginBottom:5 },
-  compareArrow: { color:C.textMuted,fontSize:18 },
-  resultBox: { backgroundColor:"rgba(77,249,255,0.07)",borderRadius:12,borderWidth:1,borderColor:"rgba(77,249,255,0.18)",padding:12,marginBottom:10 },
-  resultTitle: { color:C.text,fontSize:14,fontWeight:"900",marginBottom:4 },
-  resultBody: { color:C.textSub,fontSize:12,lineHeight:18 },
-  takeaway: { backgroundColor:"rgba(255,200,69,0.06)",borderRadius:12,borderWidth:1,borderColor:"rgba(255,200,69,0.2)",padding:12,marginBottom:8 },
-  takeawayTag: { color:C.gold,fontSize:10,fontWeight:"900",letterSpacing:1.5,marginBottom:6 },
-  takeawayText: { color:C.text,fontSize:12,lineHeight:18,marginBottom:8 },
-  disclaimer: { color:C.textMuted,fontSize:9,lineHeight:13,fontStyle:"italic" },
-  freeLabel: { color:C.textSub,fontSize:12,marginBottom:10,fontStyle:"italic" },
+  header: { flexDirection:"row",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14 },
+  title: { color:"#eef5ff",fontSize:18,fontWeight:"900" },
+  sub: { color:"#8ab8d8",fontSize:12.5,marginTop:3,fontStyle:"italic" },
+  resetBtn: { paddingHorizontal:14,paddingVertical:9,borderRadius:12,backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:"rgba(110,165,255,0.20)" },
+  resetText: { color:"#8ab8d8",fontSize:12.5,fontWeight:"800" },
+  expCard: { width:154,minHeight:100,borderRadius:16,padding:14,backgroundColor:"rgba(255,255,255,0.058)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)" },
+  expCardActive: { backgroundColor:"rgba(77,249,255,0.11)",borderColor:"rgba(77,249,255,0.52)" },
+  expEmoji: { fontSize:22,marginBottom:6 },
+  expTitle: { color:"#eef5ff",fontSize:11.5,fontWeight:"900" },
+  expSub: { color:"#8ab8d8",fontSize:9.5,marginTop:4,lineHeight:14 },
+  activeHeader: { marginBottom:12 },
+  activeName: { color:"#eef5ff",fontSize:15,fontWeight:"900" },
+  activeSub: { color:"#8ab8d8",fontSize:11.5,marginTop:3 },
+  formulaBox: { backgroundColor:"rgba(181,140,255,0.09)",borderRadius:14,borderWidth:1,borderColor:"rgba(181,140,255,0.30)",padding:13,marginBottom:9 },
+  formulaLabel: { color:"#b58cff",fontSize:9.5,fontWeight:"900",letterSpacing:0.5,marginBottom:5 },
+  formula: { color:"#eef5ff",fontSize:12.5,fontFamily:"monospace" },
+  liveBox: { backgroundColor:"rgba(77,249,255,0.07)",borderRadius:14,borderWidth:1,borderColor:"rgba(77,249,255,0.24)",padding:13,marginBottom:9 },
+  liveLabel: { color:"#4df9ff",fontSize:9.5,fontWeight:"900",letterSpacing:0.5,marginBottom:5 },
+  liveText: { color:"#eef5ff",fontSize:12.5,lineHeight:19 },
+  compareRow: { flexDirection:"row",alignItems:"center",gap:9,marginBottom:11 },
+  compareBox: { flex:1,borderRadius:14,backgroundColor:"rgba(255,255,255,0.052)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",padding:13 },
+  compareBoxAfter: { backgroundColor:"rgba(77,249,255,0.09)",borderColor:"rgba(77,249,255,0.34)" },
+  compareTag: { color:C.textMuted,fontSize:9.5,fontWeight:"900",letterSpacing:0.5,marginBottom:6 },
+  compareVal: { color:"#eef5ff",fontSize:14,fontWeight:"900" },
+  compareUnit: { color:C.textMuted,fontSize:9,marginBottom:6 },
+  compareArrow: { color:C.textMuted,fontSize:20 },
+  resultBox: { backgroundColor:"rgba(77,249,255,0.08)",borderRadius:14,borderWidth:1,borderColor:"rgba(77,249,255,0.26)",padding:15,marginBottom:11 },
+  resultTitle: { color:"#eef5ff",fontSize:15,fontWeight:"900",marginBottom:5 },
+  resultBody: { color:"#8ab8d8",fontSize:12.5,lineHeight:19 },
+  takeaway: { backgroundColor:"rgba(255,209,102,0.08)",borderRadius:14,borderWidth:1,borderColor:"rgba(255,209,102,0.28)",padding:15,marginBottom:9 },
+  takeawayTag: { color:"#ffd166",fontSize:10,fontWeight:"900",letterSpacing:1,marginBottom:7 },
+  takeawayText: { color:"#eef5ff",fontSize:12.5,lineHeight:19,marginBottom:9 },
+  disclaimer: { color:C.textMuted,fontSize:9.5,lineHeight:14,fontStyle:"italic" },
+  freeLabel: { color:"#8ab8d8",fontSize:12.5,marginBottom:11,fontStyle:"italic" },
 });
 
 const sl = StyleSheet.create({
-  wrap: { marginBottom:14 },
-  row: { flexDirection:"row",justifyContent:"space-between",alignItems:"center",marginBottom:8 },
-  label: { color:C.textSub,fontSize:11,fontWeight:"800",textTransform:"uppercase" },
-  val: { color:C.cyan,fontSize:14,fontWeight:"900" },
-  trackRow: { flexDirection:"row",alignItems:"center",gap:8 },
-  arrow: { width:30,height:30,borderRadius:8,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:C.border },
-  arrowT: { color:C.text,fontSize:20,fontWeight:"900" },
-  track: { flex:1,height:5,borderRadius:3,backgroundColor:"rgba(255,255,255,0.09)",position:"relative",overflow:"visible" },
-  fill: { height:5,borderRadius:3,backgroundColor:C.cyan,position:"absolute" },
-  thumb: { width:16,height:16,borderRadius:8,backgroundColor:"#fff",position:"absolute",top:-5.5,marginLeft:-8,borderWidth:2.5,borderColor:C.cyan },
-  ticks: { flexDirection:"row",justifyContent:"space-between",marginTop:3 },
-  tick: { color:C.textMuted,fontSize:9 },
+  wrap: { marginBottom:16 },
+  row: { flexDirection:"row",justifyContent:"space-between",alignItems:"center",marginBottom:9 },
+  label: { color:"#8ab8d8",fontSize:11.5,fontWeight:"800",textTransform:"uppercase",letterSpacing:0.5 },
+  val: { color:"#4df9ff",fontSize:15,fontWeight:"900" },
+  trackRow: { flexDirection:"row",alignItems:"center",gap:9 },
+  arrow: { width:38,height:38,borderRadius:12,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:"rgba(110,165,255,0.20)" },
+  arrowT: { color:"#eef5ff",fontSize:22,fontWeight:"900" },
+  track: { flex:1,height:7,borderRadius:4,backgroundColor:"rgba(255,255,255,0.10)",position:"relative",overflow:"visible" },
+  fill: { height:7,borderRadius:4,backgroundColor:"#4df9ff",position:"absolute" },
+  thumb: { width:20,height:20,borderRadius:10,backgroundColor:"#fff",position:"absolute",top:-7,marginLeft:-10,borderWidth:3,borderColor:"#4df9ff" },
+  ticks: { flexDirection:"row",justifyContent:"space-between",marginTop:4 },
+  tick: { color:C.textMuted,fontSize:9.5 },
 });
 
 const co = StyleSheet.create({
-  header: { flexDirection:"row",alignItems:"center",gap:12,marginBottom:12 },
-  avatar: { fontSize:34 },
-  name: { color:C.text,fontSize:16,fontWeight:"900" },
-  status: { color:C.green,fontSize:10,marginTop:2 },
+  header: { flexDirection:"row",alignItems:"center",gap:14,marginBottom:14,backgroundColor:"rgba(77,255,195,0.07)",borderRadius:18,borderWidth:1,borderColor:"rgba(77,255,195,0.22)",padding:14 },
+  avatar: { fontSize:36 },
+  name: { color:"#eef5ff",fontSize:18,fontWeight:"900" },
+  status: { color:"#4dffc3",fontSize:10.5,marginTop:3,fontWeight:"800" },
   capabilities: { flexDirection:"row",flexWrap:"wrap",gap:6,marginBottom:14 },
-  capItem: { paddingHorizontal:10,paddingVertical:5,borderRadius:20,backgroundColor:"rgba(255,255,255,0.05)",borderWidth:1,borderColor:C.border },
-  capText: { color:C.textSub,fontSize:11 },
-  chat: { gap:8,marginBottom:14 },
-  bubble: { borderRadius:14,padding:11,maxWidth:"88%" },
-  bubbleCosmo: { backgroundColor:"rgba(5,12,36,0.95)",borderWidth:1,borderColor:C.border,alignSelf:"flex-start" },
-  bubbleUser: { backgroundColor:C.cyan,alignSelf:"flex-end" },
-  bubbleText: { color:C.text,fontSize:13,lineHeight:19 },
-  sugLabel: { color:C.textMuted,fontSize:9,fontWeight:"900",letterSpacing:1.5,marginBottom:8 },
-  sugs: { gap:6 },
-  sug: { borderRadius:10,padding:11,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
-  sugQ: { color:C.textSub,fontSize:12 },
-  inputRow: { flexDirection:"row", gap:8, marginBottom:12, alignItems:"center" },
-  input: { flex:1, height:42, borderRadius:12, paddingHorizontal:12, color:C.text, backgroundColor:"rgba(255,255,255,0.06)", borderWidth:1, borderColor:C.border, fontSize:13 },
-  sendBtn: { height:42, paddingHorizontal:14, borderRadius:12, alignItems:"center", justifyContent:"center", backgroundColor:"rgba(77,249,255,0.15)", borderWidth:1, borderColor:"rgba(77,249,255,0.4)" },
-  sendText: { color:C.cyan, fontSize:12, fontWeight:"900" },
+  capItem: { paddingHorizontal:10,paddingVertical:5,borderRadius:20,backgroundColor:"rgba(255,255,255,0.05)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)" },
+  capText: { color:"#8ab8d8",fontSize:11 },
+  chat: { gap:9,marginBottom:16 },
+  bubble: { borderRadius:16,padding:13,maxWidth:"90%" },
+  bubbleCosmo: { backgroundColor:"rgba(4,10,28,0.97)",borderWidth:1,borderColor:"rgba(110,165,255,0.20)",alignSelf:"flex-start" },
+  bubbleUser: { backgroundColor:"#4df9ff",alignSelf:"flex-end" },
+  bubbleText: { color:"#eef5ff",fontSize:13.5,lineHeight:20 },
+  sugLabel: { color:C.textMuted,fontSize:9.5,fontWeight:"900",letterSpacing:1,marginBottom:9 },
+  sugs: { gap:8 },
+  sug: { borderRadius:14,padding:13,backgroundColor:"rgba(255,255,255,0.050)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",minHeight:44,justifyContent:"center" },
+  sugQ: { color:"#8ab8d8",fontSize:12.5,lineHeight:18 },
+  inputRow: { flexDirection:"row",gap:9,marginBottom:14,alignItems:"center" },
+  input: { flex:1,height:46,borderRadius:14,paddingHorizontal:14,color:"#eef5ff",backgroundColor:"rgba(255,255,255,0.07)",borderWidth:1,borderColor:"rgba(110,165,255,0.22)",fontSize:13.5 },
+  sendBtn: { height:46,paddingHorizontal:16,borderRadius:14,alignItems:"center",justifyContent:"center",backgroundColor:"rgba(77,249,255,0.16)",borderWidth:1,borderColor:"rgba(77,249,255,0.46)" },
+  sendText: { color:"#4df9ff",fontSize:12.5,fontWeight:"900" },
 });
 
 const qz = StyleSheet.create({
-  bar: { flexDirection:"row",alignItems:"center",gap:10,marginBottom:10 },
-  prog: { flex:1,height:5,borderRadius:3,backgroundColor:"rgba(255,255,255,0.08)" },
-  progFill: { height:5,borderRadius:3,backgroundColor:C.cyan },
-  scoreText: { color:C.textSub,fontSize:13,fontWeight:"900" },
-  qNum: { color:C.textMuted,fontSize:10,fontWeight:"900",letterSpacing:1.5,marginBottom:8 },
-  qCard: { backgroundColor:"rgba(5,12,34,0.9)",borderRadius:14,borderWidth:1,borderColor:C.border,padding:16,alignItems:"center",marginBottom:12 },
-  qEmoji: { fontSize:30,marginBottom:10 },
-  qText: { color:C.text,fontSize:14,fontWeight:"700",textAlign:"center",lineHeight:21 },
-  opts: { gap:8,marginBottom:10 },
-  opt: { flexDirection:"row",alignItems:"center",gap:10,borderRadius:12,padding:12,backgroundColor:"rgba(255,255,255,0.04)",borderWidth:1,borderColor:C.border },
-  optOk: { flexDirection:"row",alignItems:"center",gap:10,borderRadius:12,padding:12,backgroundColor:"rgba(77,255,180,0.1)",borderWidth:1,borderColor:"rgba(77,255,180,0.5)" },
-  optErr: { flexDirection:"row",alignItems:"center",gap:10,borderRadius:12,padding:12,backgroundColor:"rgba(255,77,109,0.1)",borderWidth:1,borderColor:"rgba(255,77,109,0.5)" },
-  optLetter: { width:26,height:26,borderRadius:7,backgroundColor:"rgba(255,255,255,0.08)",color:C.textSub,fontSize:11,fontWeight:"900",textAlign:"center",lineHeight:26 },
-  optText: { color:C.text,fontSize:13,flex:1 },
-  expl: { backgroundColor:"rgba(77,249,255,0.06)",borderRadius:12,borderWidth:1,borderColor:"rgba(77,249,255,0.18)",padding:14 },
-  explTitle: { color:C.text,fontSize:14,fontWeight:"900",marginBottom:6 },
-  explText: { color:C.textSub,fontSize:12,lineHeight:18,marginBottom:12 },
-  nextBtn: { backgroundColor:C.cyan,borderRadius:10,padding:12,alignItems:"center" },
-  nextText: { color:C.bg,fontSize:14,fontWeight:"900" },
-  done: { alignItems:"center",paddingVertical:28,paddingHorizontal:14,gap:10 },
-  doneEmoji: { fontSize:60 },
-  doneTitle: { color:C.text,fontSize:24,fontWeight:"900" },
-  doneScore: { color:C.cyan,fontSize:42,fontWeight:"900" },
-  doneSub: { color:C.textSub,fontSize:14,textAlign:"center",lineHeight:20 },
-  restartBtn: { marginTop:8,backgroundColor:"rgba(77,249,255,0.12)",borderRadius:12,paddingHorizontal:24,paddingVertical:12,borderWidth:1,borderColor:C.borderGlow },
-  restartText: { color:C.cyan,fontSize:14,fontWeight:"900" },
+  bar: { flexDirection:"row",alignItems:"center",gap:10,marginBottom:12 },
+  prog: { flex:1,height:7,borderRadius:4,backgroundColor:"rgba(255,255,255,0.09)" },
+  progFill: { height:7,borderRadius:4,backgroundColor:"#4df9ff" },
+  scoreText: { color:"#8ab8d8",fontSize:14,fontWeight:"900" },
+  qNum: { color:C.textMuted,fontSize:10.5,fontWeight:"900",letterSpacing:0.5,marginBottom:10 },
+  qCard: { backgroundColor:"rgba(4,10,28,0.97)",borderRadius:18,borderWidth:1,borderColor:"rgba(255,209,102,0.26)",padding:18,alignItems:"center",marginBottom:14 },
+  qEmoji: { fontSize:38,marginBottom:12 },
+  qText: { color:"#eef5ff",fontSize:15,fontWeight:"700",textAlign:"center",lineHeight:23 },
+  opts: { gap:9,marginBottom:12 },
+  opt: { flexDirection:"row",alignItems:"center",gap:12,borderRadius:14,padding:14,backgroundColor:"rgba(255,255,255,0.050)",borderWidth:1,borderColor:"rgba(110,165,255,0.16)",minHeight:56 },
+  optOk: { flexDirection:"row",alignItems:"center",gap:12,borderRadius:14,padding:14,backgroundColor:"rgba(77,255,195,0.10)",borderWidth:1,borderColor:"rgba(77,255,195,0.52)" },
+  optErr: { flexDirection:"row",alignItems:"center",gap:12,borderRadius:14,padding:14,backgroundColor:"rgba(255,85,128,0.10)",borderWidth:1,borderColor:"rgba(255,85,128,0.52)" },
+  optLetter: { width:30,height:30,borderRadius:9,backgroundColor:"rgba(77,249,255,0.14)",color:"#4df9ff",fontSize:12,fontWeight:"900",textAlign:"center",lineHeight:30 },
+  optText: { color:"#eef5ff",fontSize:13.5,flex:1,lineHeight:19 },
+  expl: { backgroundColor:"rgba(77,249,255,0.06)",borderRadius:14,borderWidth:1,borderColor:"rgba(77,249,255,0.22)",padding:16 },
+  explTitle: { color:"#eef5ff",fontSize:15,fontWeight:"900",marginBottom:7 },
+  explText: { color:"#8ab8d8",fontSize:12.5,lineHeight:19,marginBottom:14 },
+  nextBtn: { backgroundColor:"#4df9ff",borderRadius:12,padding:14,alignItems:"center" },
+  nextText: { color:"#01020a",fontSize:14.5,fontWeight:"900" },
+  done: { alignItems:"center",paddingVertical:32,paddingHorizontal:14,gap:12 },
+  doneEmoji: { fontSize:64 },
+  doneTitle: { color:"#eef5ff",fontSize:26,fontWeight:"900" },
+  doneScore: { color:"#4df9ff",fontSize:46,fontWeight:"900" },
+  doneSub: { color:"#8ab8d8",fontSize:14.5,textAlign:"center",lineHeight:22 },
+  restartBtn: { marginTop:10,backgroundColor:"rgba(77,249,255,0.12)",borderRadius:14,paddingHorizontal:28,paddingVertical:14,borderWidth:1,borderColor:"rgba(77,249,255,0.44)" },
+  restartText: { color:"#4df9ff",fontSize:14.5,fontWeight:"900" },
 });
 
 const sect = StyleSheet.create({
-  title: { color:C.text,fontSize:18,fontWeight:"900",marginBottom:4 },
-  sub: { color:C.textSub,fontSize:12,marginBottom:12 },
+  title: { color:"#eef5ff",fontSize:19,fontWeight:"900",marginBottom:5 },
+  sub: { color:"#8ab8d8",fontSize:12.5,marginBottom:14 },
 });

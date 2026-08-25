@@ -22,6 +22,13 @@ export type Planet = {
   ring?: boolean;
   fact: string;
   funFacts: [string, string, string];
+  namedFor: string;
+  discoveredBy: string;
+  discovery: string;
+  missions: string[];
+  upcomingMissions: string[];
+  organizations: string[];
+  links: Array<{ label: string; url: string }>;
 };
 
 // Physical constants
@@ -55,6 +62,17 @@ export const PLANETS: Planet[] = [
       "Despite being closest to the Sun, Mercury is NOT the hottest planet — Venus is.",
       "Mercury has water ice hidden in permanently shadowed craters at its poles.",
       "A year on Mercury is only 88 Earth days — shorter than its own day of 176 Earth days of sunlight."
+    ],
+    namedFor: "The Roman messenger god, because Mercury moves quickly across the sky.",
+    discoveredBy: "Known since ancient times",
+    discovery: "Mercury is visible without a telescope, so no single discoverer is credited.",
+    missions: ["Mariner 10", "MESSENGER", "BepiColombo"],
+    upcomingMissions: ["BepiColombo Mercury orbit science phase"],
+    organizations: ["NASA", "ESA", "JAXA"],
+    links: [
+      { label: "NASA Mercury", url: "https://science.nasa.gov/mercury/" },
+      { label: "ESA BepiColombo", url: "https://www.esa.int/Science_Exploration/Space_Science/BepiColombo" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Mercury_(planet)" }
     ]
   },
   {
@@ -82,6 +100,17 @@ export const PLANETS: Planet[] = [
       "A day on Venus is longer than its year — it's the only planet where this is true.",
       "Venus rotates in the opposite direction to most planets — the Sun rises in the west.",
       "The atmospheric pressure on Venus is 90× that of Earth — like being 900m underwater."
+    ],
+    namedFor: "The Roman goddess of love and beauty, because Venus appears bright and beautiful in the sky.",
+    discoveredBy: "Known since ancient times",
+    discovery: "Venus is one of the brightest objects in the night sky and has been observed by many ancient cultures.",
+    missions: ["Venera", "Magellan", "Akatsuki", "Parker Solar Probe flybys"],
+    upcomingMissions: ["NASA DAVINCI", "NASA VERITAS", "ESA EnVision"],
+    organizations: ["NASA", "ESA", "JAXA", "Soviet space program"],
+    links: [
+      { label: "NASA Venus", url: "https://science.nasa.gov/venus/" },
+      { label: "ESA EnVision", url: "https://www.esa.int/Science_Exploration/Space_Science/EnVision" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Venus" }
     ]
   },
   {
@@ -109,6 +138,17 @@ export const PLANETS: Planet[] = [
       "Earth spins at about 1,670 km/h at the equator — faster than a bullet.",
       "The Moon stabilizes Earth's axial tilt, keeping our climate steady for life.",
       "Earth's magnetic field shields us from deadly solar radiation every single second."
+    ],
+    namedFor: "The English/Germanic word for ground or soil; unlike other planets, Earth is not named after a Roman god.",
+    discoveredBy: "Our home world",
+    discovery: "Earth was recognized as a planet through centuries of astronomy, especially the heliocentric model.",
+    missions: ["ISS", "Landsat", "Sentinel", "INSAT", "NISAR", "Hubble"],
+    upcomingMissions: ["NISAR operations", "EarthCARE", "future climate and weather satellites"],
+    organizations: ["NASA", "ISRO", "ESA", "JAXA", "CNSA", "SpaceX"],
+    links: [
+      { label: "NASA Earth", url: "https://science.nasa.gov/earth/" },
+      { label: "NASA ISS", url: "https://www.nasa.gov/international-space-station/" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Earth" }
     ]
   },
   {
@@ -136,6 +176,17 @@ export const PLANETS: Planet[] = [
       "Olympus Mons on Mars is so wide that you couldn't see its edges standing at the center.",
       "Mars has two tiny potato-shaped moons: Phobos and Deimos.",
       "Sunsets on Mars are blue because of how dust scatters light in the thin atmosphere."
+    ],
+    namedFor: "The Roman god of war, inspired by its red color.",
+    discoveredBy: "Known since ancient times",
+    discovery: "Mars has been tracked by ancient astronomers for thousands of years because of its red color and wandering motion.",
+    missions: ["Viking", "Pathfinder", "Spirit", "Opportunity", "Curiosity", "Perseverance", "Mangalyaan", "Tianwen-1", "Hope Probe"],
+    upcomingMissions: ["Mars Sample Return concepts", "ExoMars Rosalind Franklin"],
+    organizations: ["NASA", "ISRO", "ESA", "CNSA", "UAE Space Agency"],
+    links: [
+      { label: "NASA Mars", url: "https://science.nasa.gov/mars/" },
+      { label: "ISRO Mangalyaan", url: "https://www.isro.gov.in/MarsOrbiterMissionSpacecraft.html" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Mars" }
     ]
   },
   {
@@ -163,6 +214,17 @@ export const PLANETS: Planet[] = [
       "Jupiter's Great Red Spot is a storm that has been raging for over 350 years.",
       "Jupiter's moon Ganymede is larger than the planet Mercury.",
       "If Jupiter were about 80× more massive, it could have become a star."
+    ],
+    namedFor: "The king of the Roman gods, matching Jupiter's giant size.",
+    discoveredBy: "Known since ancient times",
+    discovery: "Jupiter is bright enough to see without a telescope. Galileo discovered its four largest moons in 1610.",
+    missions: ["Pioneer 10", "Voyager 1", "Voyager 2", "Galileo", "Juno"],
+    upcomingMissions: ["Europa Clipper", "ESA JUICE"],
+    organizations: ["NASA", "ESA"],
+    links: [
+      { label: "NASA Jupiter", url: "https://science.nasa.gov/jupiter/" },
+      { label: "NASA Europa Clipper", url: "https://science.nasa.gov/mission/europa-clipper/" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Jupiter" }
     ]
   },
   {
@@ -191,6 +253,17 @@ export const PLANETS: Planet[] = [
       "Saturn is less dense than water — it would float if you could find an ocean big enough.",
       "Saturn's moon Titan has lakes of liquid methane — the only body besides Earth with surface liquids.",
       "Saturn's rings are incredibly thin: up to 282,000 km wide but only ~10 meters thick."
+    ],
+    namedFor: "The Roman god of agriculture and time.",
+    discoveredBy: "Known since ancient times",
+    discovery: "Saturn is visible to the naked eye. Galileo first viewed its rings through a telescope in 1610, though he did not understand their shape.",
+    missions: ["Pioneer 11", "Voyager 1", "Voyager 2", "Cassini-Huygens"],
+    upcomingMissions: ["NASA Dragonfly to Titan"],
+    organizations: ["NASA", "ESA", "ASI"],
+    links: [
+      { label: "NASA Saturn", url: "https://science.nasa.gov/saturn/" },
+      { label: "NASA Dragonfly", url: "https://science.nasa.gov/mission/dragonfly/" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Saturn" }
     ]
   },
   {
@@ -218,6 +291,17 @@ export const PLANETS: Planet[] = [
       "Uranus has rings too — they're just much darker and harder to see than Saturn's.",
       "On Uranus, a single season lasts 21 years because of its extreme axial tilt.",
       "Uranus's moons are named after Shakespeare characters, not mythology."
+    ],
+    namedFor: "The Greek god of the sky.",
+    discoveredBy: "William Herschel",
+    discovery: "William Herschel discovered Uranus in 1781, making it the first planet found with a telescope.",
+    missions: ["Voyager 2 flyby"],
+    upcomingMissions: ["Uranus orbiter concepts recommended by planetary scientists"],
+    organizations: ["NASA"],
+    links: [
+      { label: "NASA Uranus", url: "https://science.nasa.gov/uranus/" },
+      { label: "NASA Voyager", url: "https://science.nasa.gov/mission/voyager/" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Uranus" }
     ]
   },
   {
@@ -245,6 +329,17 @@ export const PLANETS: Planet[] = [
       "Neptune was discovered through mathematics before it was seen through a telescope.",
       "Triton, Neptune's largest moon, orbits backwards — it was probably captured from the Kuiper Belt.",
       "Neptune has only completed one full orbit since it was discovered in 1846."
+    ],
+    namedFor: "The Roman god of the sea, matching its deep blue color.",
+    discoveredBy: "Johann Galle and Heinrich d'Arrest, using predictions by Urbain Le Verrier",
+    discovery: "Neptune was discovered in 1846 after astronomers predicted its position from Uranus's unusual orbit.",
+    missions: ["Voyager 2 flyby"],
+    upcomingMissions: ["Neptune/Triton mission concepts"],
+    organizations: ["NASA"],
+    links: [
+      { label: "NASA Neptune", url: "https://science.nasa.gov/neptune/" },
+      { label: "NASA Voyager", url: "https://science.nasa.gov/mission/voyager/" },
+      { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Neptune" }
     ]
   }
 ];

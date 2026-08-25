@@ -7,6 +7,9 @@ export type Moon = {
   color: string;
   visualRadius: number;
   orbitScale: number;
+  orbitDirection: 1 | -1;
+  orbitTilt: number;
+  orbitSpeed: number;
   fact: string;
   funFacts: [string, string, string];
   textureKey?: "moon";
@@ -22,6 +25,9 @@ export const MOONS: Moon[] = [
     color: "#c8d0e0",
     visualRadius: 0.27,
     orbitScale: 2.6,
+    orbitDirection: 1,
+    orbitTilt: 5.1,
+    orbitSpeed: 0.23,
     textureKey: "moon",
     fact: "Earth's Moon is the only other world humans have walked on — and it locks the same face toward us as it orbits.",
     funFacts: [
@@ -39,6 +45,9 @@ export const MOONS: Moon[] = [
     color: "#8a7060",
     visualRadius: 0.08,
     orbitScale: 2.15,
+    orbitDirection: 1,
+    orbitTilt: 1.1,
+    orbitSpeed: 0.62,
     fact: "Phobos is a potato-shaped moon so close to Mars that it would look huge in the sky — and it is spiraling inward.",
     funFacts: [
       "Phobos completes an orbit in just 7 hours 39 minutes — faster than Mars rotates.",
@@ -55,6 +64,9 @@ export const MOONS: Moon[] = [
     color: "#9a8878",
     visualRadius: 0.06,
     orbitScale: 3.4,
+    orbitDirection: 1,
+    orbitTilt: 1.8,
+    orbitSpeed: 0.34,
     fact: "Deimos is Mars's smaller outer moon — a dark, cratered rock that may be a captured asteroid.",
     funFacts: [
       "Deimos takes about 30 hours to orbit Mars, so it hangs in the sky for days.",
@@ -71,6 +83,9 @@ export const MOONS: Moon[] = [
     color: "#e8c45a",
     visualRadius: 0.18,
     orbitScale: 2.2,
+    orbitDirection: 1,
+    orbitTilt: 0.05,
+    orbitSpeed: 0.5,
     fact: "Io is the most volcanically active body in the Solar System, painted yellow and orange by sulfur.",
     funFacts: [
       "Jupiter's tides squeeze Io so hard that its interior stays molten.",
@@ -87,6 +102,9 @@ export const MOONS: Moon[] = [
     color: "#d8ecec",
     visualRadius: 0.16,
     orbitScale: 2.7,
+    orbitDirection: 1,
+    orbitTilt: 0.47,
+    orbitSpeed: 0.38,
     fact: "Europa hides a global saltwater ocean under an icy crust — one of the best places to look for life beyond Earth.",
     funFacts: [
       "The ice shell may be 10–30 km thick over an ocean up to 100 km deep.",
@@ -103,6 +121,9 @@ export const MOONS: Moon[] = [
     color: "#b8b0a0",
     visualRadius: 0.22,
     orbitScale: 3.25,
+    orbitDirection: 1,
+    orbitTilt: 0.2,
+    orbitSpeed: 0.29,
     fact: "Ganymede is larger than Mercury and the only moon with its own magnetic field.",
     funFacts: [
       "Ganymede has a subsurface ocean and a metallic core.",
@@ -119,6 +140,9 @@ export const MOONS: Moon[] = [
     color: "#7a7068",
     visualRadius: 0.2,
     orbitScale: 3.85,
+    orbitDirection: 1,
+    orbitTilt: 0.28,
+    orbitSpeed: 0.22,
     fact: "Callisto is the most heavily cratered large moon — a time capsule of the early Solar System.",
     funFacts: [
       "It has barely been geologically active for billions of years.",
@@ -135,6 +159,9 @@ export const MOONS: Moon[] = [
     color: "#d4a06a",
     visualRadius: 0.24,
     orbitScale: 2.55,
+    orbitDirection: 1,
+    orbitTilt: 0.35,
+    orbitSpeed: 0.26,
     fact: "Titan is the only moon with a thick atmosphere and stable lakes — but they are liquid methane and ethane.",
     funFacts: [
       "Huygens landed on Titan in 2005 and sent back photos of a river-carved landscape.",
@@ -151,6 +178,9 @@ export const MOONS: Moon[] = [
     color: "#f0f4ff",
     visualRadius: 0.1,
     orbitScale: 3.2,
+    orbitDirection: 1,
+    orbitTilt: 0.01,
+    orbitSpeed: 0.42,
     fact: "Enceladus sprays ice from a south-polar ocean into space — feeding Saturn's E ring.",
     funFacts: [
       "Cassini flew through the plumes and found water, salts, and organic molecules.",
@@ -167,6 +197,9 @@ export const MOONS: Moon[] = [
     color: "#c8b8d8",
     visualRadius: 0.2,
     orbitScale: 2.7,
+    orbitDirection: -1,
+    orbitTilt: 157,
+    orbitSpeed: 0.28,
     fact: "Triton orbits Neptune backwards — almost certainly a captured Kuiper Belt object.",
     funFacts: [
       "Voyager 2 saw nitrogen geysers and a cantaloupe-textured crust.",
