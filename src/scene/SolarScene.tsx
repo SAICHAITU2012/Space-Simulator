@@ -19,7 +19,7 @@ import {
 export function SolarScene({
   selectedId, paused, speed, camRef, camTarget, motionRef, isInteracting,
   pendingTap, planetScreenPos, labInputs, onPlanetTapped, zoomLevel,
-  simDaysRef, daysPerSecond, trueScale, showCutaway,
+  simDaysRef, daysPerSecond, trueScale, showCutaway, focusedId,
 }: {
   selectedId: string;
   paused: boolean;
@@ -37,6 +37,7 @@ export function SolarScene({
   daysPerSecond: number;
   trueScale: boolean;
   showCutaway?: boolean;
+  focusedId?: string | null;
 }) {
   return (
     <>
@@ -58,7 +59,8 @@ export function SolarScene({
         <OrbitingPlanet
           key={pl.id}
           planet={pl}
-          selected={pl.id === selectedId}
+          selected={pl.id === focusedId}
+          focusedMoonId={focusedId}
           paused={paused}
           speed={speed}
           labInputs={pl.id === selectedId ? labInputs : undefined}
@@ -72,7 +74,8 @@ export function SolarScene({
         <OrbitingDwarf
           key={d.id}
           dwarf={d}
-          selected={d.id === selectedId}
+          selected={d.id === focusedId}
+          focusedMoonId={focusedId}
           paused={paused}
           speed={speed}
           screenPos={planetScreenPos}
@@ -81,7 +84,7 @@ export function SolarScene({
         />
       ))}
       {DEEP_SPACE_OBJECTS.map(object => (
-        <DeepSpaceMarker key={object.id} object={object} screenPos={planetScreenPos} />
+        <DeepSpaceMarker key={object.id} object={object} screenPos={planetScreenPos} focused={object.id === focusedId} />
       ))}
     </>
   );

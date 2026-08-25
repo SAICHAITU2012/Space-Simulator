@@ -1,6 +1,5 @@
 import React, { useMemo } from "react";
 import * as THREE from "three";
-import { useBodyTexture } from "../lib/textures";
 import { getQuality } from "../lib/quality";
 
 function mkStars(n: number, r0: number, r1: number) {
@@ -15,9 +14,7 @@ function mkStars(n: number, r0: number, r1: number) {
 }
 
 export function StarSky({ dim }: { dim?: boolean }) {
-  const milky = useBodyTexture("milkyWay");
-  const stars = useBodyTexture("stars");
-  const map = milky ?? stars;
+  const map = null;
   return (
     <mesh>
       <sphereGeometry args={[900, 24, 16]} />

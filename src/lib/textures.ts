@@ -4,184 +4,54 @@ import { cacheDirectory, copyAsync, deleteAsync, getInfoAsync } from "expo-file-
 import { Platform } from "react-native";
 import * as THREE from "three";
 
-// .xjpg / .xpng so Android does not pack maps as drawables.
+// The 512px overview maps reduce decoded GPU allocation; originals stay intact.
 export const TEXTURE_SOURCES = {
-  sun:             require("../../assets/2k_sun.xjpg"),
-  mercury:         require("../../assets/2k_mercury.xjpg"),
-  venus:           require("../../assets/2k_venus_surface.xjpg"),
-  venusAtmosphere: require("../../assets/2k_venus_atmosphere.xjpg"),
-  earth:           require("../../assets/2k_earth_daymap.xjpg"),
-  earthNight:      require("../../assets/2k_earth_nightmap.xjpg"),
-  moon:            require("../../assets/2k_moon.xjpg"),
-  moonBump:        require("../../assets/2k_moon_bump.xjpg"),
-  mars:            require("../../assets/2k_mars.xjpg"),
-  jupiter:         require("../../assets/2k_jupiter.xjpg"),
-  saturn:          require("../../assets/2k_saturn.xjpg"),
-  saturnRing:      require("../../assets/saturn_ring.xpng"),
-  uranus:          require("../../assets/2k_uranus.xjpg"),
-  uranusRing:      require("../../assets/uranus_ring.xpng"),
-  neptune:         require("../../assets/2k_neptune.xjpg"),
-  stars:           require("../../assets/2k_stars.xjpg"),
-  milkyWay:        require("../../assets/2k_stars_milky_way.xjpg"),
-  ceres:           require("../../assets/2k_ceres_fictional.xjpg"),
-  haumea:          require("../../assets/2k_haumea_fictional.xjpg"),
-  makemake:        require("../../assets/2k_makemake_fictional.xjpg"),
-  eris:            require("../../assets/2k_eris_fictional.xjpg"),
-  pluto:           require("../../assets/2k_pluto.xjpg"),
-  io:              require("../../assets/1k_io.xjpg"),
-  europa:          require("../../assets/1k_europa.xjpg"),
-  callisto:        require("../../assets/1k_callisto.xjpg"),
-  andromeda:       require("../../assets/1k_andromeda.xjpg"),
-  whirlpool:       require("../../assets/1k_whirlpool.xjpg"),
+  sun: require("../../assets/2k_sun.xjpg"), sunOverview: require("../../assets/512_sun.xjpg"),
+  mercury: require("../../assets/2k_mercury.xjpg"), mercuryOverview: require("../../assets/512_mercury.xjpg"),
+  venus: require("../../assets/2k_venus_surface.xjpg"), venusOverview: require("../../assets/512_venus_surface.xjpg"), venusAtmosphere: require("../../assets/2k_venus_atmosphere.xjpg"),
+  earth: require("../../assets/2k_earth_daymap.xjpg"), earthOverview: require("../../assets/512_earth_daymap.xjpg"), earthNight: require("../../assets/2k_earth_nightmap.xjpg"),
+  moon: require("../../assets/2k_moon.xjpg"), moonOverview: require("../../assets/512_moon.xjpg"), moonBump: require("../../assets/2k_moon_bump.xjpg"),
+  mars: require("../../assets/2k_mars.xjpg"), marsOverview: require("../../assets/512_mars.xjpg"),
+  jupiter: require("../../assets/2k_jupiter.xjpg"), jupiterOverview: require("../../assets/512_jupiter.xjpg"),
+  saturn: require("../../assets/2k_saturn.xjpg"), saturnOverview: require("../../assets/512_saturn.xjpg"), saturnRing: require("../../assets/saturn_ring.xpng"),
+  uranus: require("../../assets/2k_uranus.xjpg"), uranusOverview: require("../../assets/512_uranus.xjpg"), uranusRing: require("../../assets/uranus_ring.xpng"),
+  neptune: require("../../assets/2k_neptune.xjpg"), neptuneOverview: require("../../assets/512_neptune.xjpg"),
+  stars: require("../../assets/2k_stars.xjpg"), milkyWay: require("../../assets/2k_stars_milky_way.xjpg"),
+  ceres: require("../../assets/2k_ceres_fictional.xjpg"), haumea: require("../../assets/2k_haumea_fictional.xjpg"), makemake: require("../../assets/2k_makemake_fictional.xjpg"), eris: require("../../assets/2k_eris_fictional.xjpg"), pluto: require("../../assets/2k_pluto.xjpg"),
+  io: require("../../assets/1k_io.xjpg"), europa: require("../../assets/1k_europa.xjpg"), callisto: require("../../assets/1k_callisto.xjpg"), andromeda: require("../../assets/1k_andromeda.xjpg"), whirlpool: require("../../assets/1k_whirlpool.xjpg"),
 } as const;
-
 export type TextureKey = keyof typeof TEXTURE_SOURCES;
+export type TextureTier = "core" | "detail";
+export const PLANET_TEXTURE_KEY: Record<string, TextureKey> = { mercury: "mercury", venus: "venus", earth: "earth", mars: "mars", jupiter: "jupiter", saturn: "saturn", uranus: "uranus", neptune: "neptune" };
+export const PLANET_OVERVIEW_TEXTURE_KEY: Record<string, TextureKey> = { mercury: "mercuryOverview", venus: "venusOverview", earth: "earthOverview", mars: "marsOverview", jupiter: "jupiterOverview", saturn: "saturnOverview", uranus: "uranusOverview", neptune: "neptuneOverview" };
 
-export const PLANET_TEXTURE_KEY: Record<string, TextureKey> = {
-  mercury: "mercury",
-  venus:   "venus",
-  earth:   "earth",
-  mars:    "mars",
-  jupiter: "jupiter",
-  saturn:  "saturn",
-  uranus:  "uranus",
-  neptune: "neptune",
-};
-
-const cache    = new Map<TextureKey, THREE.Texture | null>();
+type Entry = { texture: THREE.Texture | null; refs: number; tier: TextureTier };
+const cache = new Map<TextureKey, Entry>();
 const inflight = new Map<TextureKey, Promise<THREE.Texture | null>>();
-
-function configureMap(tex: THREE.Texture) {
-  tex.colorSpace      = THREE.SRGBColorSpace;
-  tex.wrapS           = THREE.ClampToEdgeWrapping;
-  tex.wrapT           = THREE.ClampToEdgeWrapping;
-  tex.minFilter       = THREE.LinearMipmapLinearFilter;
-  tex.magFilter       = THREE.LinearFilter;
-  tex.generateMipmaps = true;
-  tex.anisotropy      = 4;
-  tex.needsUpdate     = true;
-  return tex;
+const pngKeys = new Set<TextureKey>(["saturnRing", "uranusRing"]);
+function configure(texture: THREE.Texture) { texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping; texture.minFilter = THREE.LinearMipmapLinearFilter; texture.magFilter = THREE.LinearFilter; texture.generateMipmaps = true; texture.anisotropy = 2; texture.needsUpdate = true; return texture; }
+function uri(path: string) { return path.startsWith("file://") || !path.startsWith("/") ? path : `file://${path}`; }
+async function createTexture(key: TextureKey): Promise<THREE.Texture | null> {
+  try {
+    const asset = Asset.fromModule(TEXTURE_SOURCES[key]); await asset.downloadAsync();
+    const source = asset.localUri ?? asset.uri; if (!source) throw new Error(`No URI for ${key}`);
+    if (Platform.OS === "web") return await new Promise((resolve, reject) => { const image = document.createElement("img"); image.crossOrigin = "anonymous"; image.onload = () => resolve(configure(new THREE.Texture(image))); image.onerror = reject; image.src = source; });
+    if (!cacheDirectory) throw new Error("No Expo cache directory");
+    const destination = uri(`${cacheDirectory}sv_${key}.${pngKeys.has(key) ? "png" : "jpg"}`); const info = await getInfoAsync(destination);
+    if (!info.exists || (("size" in info) && (info.size ?? 0) < 64)) { if (info.exists) await deleteAsync(destination, { idempotent: true }); await copyAsync({ from: uri(source), to: destination }); }
+    const texture = new THREE.Texture(); texture.image = { localUri: destination, data: { localUri: destination }, width: asset.width || 1024, height: asset.height || 1024 } as unknown as HTMLImageElement; return configure(texture);
+  } catch (error) { console.error("Failed to load texture:", key, error); return null; }
 }
 
-function cacheExt(key: TextureKey): string {
-  return key === "saturnRing" || key === "uranusRing" ? "png" : "jpg";
+/** A detail lease is immediately disposed when its final displayed user releases it. */
+export function loadBodyTexture(key: TextureKey, tier: TextureTier = "detail") {
+  const entry = cache.get(key); if (entry?.texture) { entry.refs += 1; return Promise.resolve(entry.texture); }
+  if (entry) entry.refs += 1; else cache.set(key, { texture: null, refs: 1, tier });
+  const pending = inflight.get(key); if (pending) return pending;
+  const job = createTexture(key).then(texture => { const current = cache.get(key); if (!current) { texture?.dispose(); return null; } current.texture = texture; if (current.tier === "detail" && current.refs === 0) { texture?.dispose(); cache.delete(key); return null; } return texture; }).finally(() => inflight.delete(key));
+  inflight.set(key, job); return job;
 }
-
-function toFileUri(path: string): string {
-  if (path.startsWith("file://")) return path;
-  if (path.startsWith("/")) return `file://${path}`;
-  return path;
-}
-
-/** Web: create THREE.Texture via browser HTMLImageElement. */
-async function loadViaImage(url: string, key: TextureKey): Promise<THREE.Texture> {
-  return new Promise((resolve, reject) => {
-    const img = document.createElement("img");
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const tex = new THREE.Texture(img);
-      configureMap(tex);
-      resolve(tex);
-    };
-    img.onerror = (e) => {
-      console.warn(`[textures] Image failed "${key}" (${url})`);
-      reject(e);
-    };
-    img.src = url;
-  });
-}
-
-/**
- * Native expo-gl: copy the packed asset to a real file:// JPEG/PNG, then
- * hand Three a synthetic image with `localUri`. Never TextureLoader.
- * expo-gl only decodes URIs that start with file:// (see EXGLImageUtils).
- */
-async function loadViaLocalUri(key: TextureKey): Promise<THREE.Texture> {
-  if (!cacheDirectory) throw new Error("no cacheDirectory");
-
-  const asset = Asset.fromModule(TEXTURE_SOURCES[key]);
-  await asset.downloadAsync();
-  const srcRaw = asset.localUri ?? asset.uri;
-  if (!srcRaw) throw new Error(`no uri for ${key}`);
-  const src = toFileUri(srcRaw);
-
-  const dest = toFileUri(`${cacheDirectory}sv_${key}.${cacheExt(key)}`);
-  const info = await getInfoAsync(dest);
-  const stale = !info.exists || (("size" in info) && (info.size ?? 0) < 64);
-  if (stale) {
-    if (info.exists) {
-      await deleteAsync(dest, { idempotent: true });
-    }
-    await copyAsync({ from: src, to: dest });
-  }
-
-  const copied = await getInfoAsync(dest);
-  const size = "size" in copied ? (copied.size ?? 0) : 0;
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`[textures] ${key} src=${src} dest=${dest} bytes=${size}`);
-  }
-  if (size < 64) throw new Error(`empty cache file for ${key}`);
-
-  const tex = new THREE.Texture();
-  const w = asset.width || 1024;
-  const h = asset.height || 1024;
-  const image = { localUri: dest, data: { localUri: dest }, width: w, height: h };
-  tex.image = image as unknown as HTMLImageElement;
-  configureMap(tex);
-  return tex;
-}
-
-export async function loadBodyTexture(key: TextureKey): Promise<THREE.Texture | null> {
-  if (cache.has(key)) return cache.get(key) ?? null;
-  const pending = inflight.get(key);
-  if (pending) return pending;
-
-  const job = (async () => {
-    try {
-      const tex = Platform.OS === "web"
-        ? await (async () => {
-          const asset = Asset.fromModule(TEXTURE_SOURCES[key]);
-          await asset.downloadAsync();
-          const url = asset.localUri ?? asset.uri;
-          if (!url) throw new Error(`no url for ${key}`);
-          return loadViaImage(url, key);
-        })()
-        : await loadViaLocalUri(key);
-      cache.set(key, tex);
-      return tex;
-    } catch (e) {
-      console.warn(`[textures] failed "${key}":`, e);
-      return null;
-    } finally {
-      inflight.delete(key);
-    }
-  })();
-
-  inflight.set(key, job);
-  return job;
-}
-
-export function countCachedTextures(): number {
-  let n = 0;
-  cache.forEach(v => { if (v) n += 1; });
-  return n;
-}
-
-export function useBodyTexture(key: TextureKey | undefined): THREE.Texture | null {
-  const [map, setMap] = useState<THREE.Texture | null>(
-    key ? (cache.get(key) ?? null) : null
-  );
-
-  useEffect(() => {
-    if (!key) { setMap(null); return undefined; }
-    let live = true;
-    if (cache.has(key)) { setMap(cache.get(key) ?? null); return undefined; }
-    loadBodyTexture(key).then((tex) => { if (live) setMap(tex); });
-    return () => { live = false; };
-  }, [key]);
-
-  return map;
-}
-
-export const TEXTURE_CREDIT =
-  "Planet maps: Solar System Scope (solarsystemscope.com/textures), CC BY 4.0. Galaxy discs: NASA/ESA Hubble (public domain). See CREDITS.md.";
+export function releaseBodyTexture(key: TextureKey) { const entry = cache.get(key); if (!entry) return; entry.refs = Math.max(0, entry.refs - 1); if (entry.tier === "detail" && entry.refs === 0 && entry.texture) { entry.texture.dispose(); cache.delete(key); } }
+export function countCachedTextures() { let count = 0; cache.forEach(entry => { if (entry.texture) count += 1; }); return count; }
+export function useBodyTexture(key: TextureKey | undefined, tier: TextureTier = "detail"): THREE.Texture | null { const [map, setMap] = useState<THREE.Texture | null>(null); useEffect(() => { if (!key) { setMap(null); return undefined; } let active = true; void loadBodyTexture(key, tier).then(texture => { if (active) setMap(texture); }); return () => { active = false; releaseBodyTexture(key); }; }, [key, tier]); return map; }
+export const TEXTURE_CREDIT = "Planet maps: Solar System Scope (solarsystemscope.com/textures), CC BY 4.0. Galaxy discs: NASA/ESA Hubble (public domain). See CREDITS.md.";

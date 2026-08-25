@@ -621,6 +621,7 @@ export default function App() {
             ) : (
               <SolarScene
                 selectedId={selectedDwarfId ?? selectedPlanetId}
+                focusedId={selectedMoonId ?? selectedDwarfId ?? selectedDeepId ?? (floatingCard === "planet" ? selectedPlanetId : null)}
                 paused={paused}
                 speed={speed}
                 camRef={camRef}

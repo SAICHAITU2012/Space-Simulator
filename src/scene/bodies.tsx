@@ -6,7 +6,7 @@ import { Moon, MOONS_BY_PLANET } from "../data/moons";
 import { DwarfPlanet } from "../data/dwarfs";
 import { DeepSpaceObject } from "../data/deepSpace";
 import { LabInputs } from "../lib/physics";
-import { PLANET_TEXTURE_KEY, useBodyTexture } from "../lib/textures";
+import { PLANET_OVERVIEW_TEXTURE_KEY, PLANET_TEXTURE_KEY, useBodyTexture } from "../lib/textures";
 import { getOrbitPoints, getOrbitalPosition, getMeanAnomaly, visualSemiMajor } from "../lib/kepler";
 import { DWARF_ELEMENTS, HALLEY, PLANET_ELEMENTS } from "../data/orbitals";
 import { getQuality } from "../lib/quality";
@@ -35,7 +35,7 @@ export function Sun() {
   const l2 = useRef<THREE.Mesh>(null);
   const l3 = useRef<THREE.Mesh>(null);
   const sunCore = useRef<THREE.Mesh>(null);
-  const sunMap = useBodyTexture("sun");
+  const sunMap = useBodyTexture("sunOverview", "core");
   const segs = getQuality().sphereSegments;
 
   useFrame(({ clock }) => {
@@ -141,10 +141,11 @@ export function HubEarth() {
 }
 
 export function OrbitingPlanet({
-  planet, selected, paused, speed, labInputs, screenPos, simDaysRef, trueScale, showCutaway,
+  planet, selected, focusedMoonId, paused, speed, labInputs, screenPos, simDaysRef, trueScale, showCutaway,
 }: {
   planet: Planet;
   selected: boolean;
+  focusedMoonId?: string | null;
   paused: boolean;
   speed: number;
   labInputs?: LabInputs;
@@ -159,12 +160,12 @@ export function OrbitingPlanet({
   const spinRef = useRef<THREE.Group>(null);
   const q = getQuality();
   const vR = Math.max(0.15, planet.visualRadius * (selected ? (labInputs?.radiusScale ?? 1) : 1));
-  const texKey = PLANET_TEXTURE_KEY[planet.id];
-  const map = useBodyTexture(texKey);
-  const venusAtmo = useBodyTexture(planet.id === "venus" ? "venusAtmosphere" : undefined);
-  const saturnRing = useBodyTexture(planet.id === "saturn" ? "saturnRing" : undefined);
-  const uranusRing = useBodyTexture(planet.id === "uranus" ? "uranusRing" : undefined);
-  const earthNight = useBodyTexture(planet.id === "earth" ? "earthNight" : undefined);
+  const texKey = selected ? PLANET_TEXTURE_KEY[planet.id] : PLANET_OVERVIEW_TEXTURE_KEY[planet.id];
+  const map = useBodyTexture(texKey, selected ? "detail" : "core");
+  const venusAtmo = useBodyTexture(selected && planet.id === "venus" ? "venusAtmosphere" : undefined);
+  const saturnRing = useBodyTexture(selected && planet.id === "saturn" ? "saturnRing" : undefined);
+  const uranusRing = useBodyTexture(selected && planet.id === "uranus" ? "uranusRing" : undefined);
+  const earthNight = useBodyTexture(selected && planet.id === "earth" ? "earthNight" : undefined);
   const earthMat = useMemo(() => {
     if (planet.id !== "earth" || !q.earthShader || !map || !earthNight) return null;
     return makeEarthDayNightMaterial(map, earthNight);
@@ -273,7 +274,7 @@ export function OrbitingPlanet({
           </group>
         )}
         {moons.map(moon => (
-          <OrbitingMoon key={moon.id} moon={moon} planetRadius={vR} paused={paused} speed={speed} screenPos={screenPos} />
+          <OrbitingMoon key={moon.id} moon={moon} focused={moon.id === focusedMoonId} planetRadius={vR} paused={paused} speed={speed} screenPos={screenPos} />
         ))}
       </group>
     </group>
@@ -281,9 +282,10 @@ export function OrbitingPlanet({
 }
 
 export function OrbitingMoon({
-  moon, planetRadius, paused, speed, screenPos,
+  moon, focused = false, planetRadius, paused, speed, screenPos,
 }: {
   moon: Moon;
+  focused?: boolean;
   planetRadius: number;
   paused: boolean;
   speed: number;
@@ -291,8 +293,8 @@ export function OrbitingMoon({
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
-  const map = useBodyTexture(moon.textureKey);
-  const bump = useBodyTexture(moon.id === "luna" && getQuality().bumpMaps ? "moonBump" : undefined);
+  const map = useBodyTexture(focused ? moon.textureKey : moon.id === "luna" ? "moonOverview" : undefined, focused ? "detail" : "core");
+  const bump = useBodyTexture(undefined);
   const r = Math.max(0.05, planetRadius * moon.visualRadius);
   const d = planetRadius * moon.orbitScale;
   const tilt = moon.orbitTilt * (Math.PI / 180);
@@ -336,10 +338,11 @@ export function OrbitingMoon({
 }
 
 export function OrbitingDwarf({
-  dwarf, selected, paused, speed, screenPos, simDaysRef, trueScale,
+  dwarf, selected, focusedMoonId, paused, speed, screenPos, simDaysRef, trueScale,
 }: {
   dwarf: DwarfPlanet;
   selected: boolean;
+  focusedMoonId?: string | null;
   paused: boolean;
   speed: number;
   screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
@@ -348,7 +351,7 @@ export function OrbitingDwarf({
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const bodyRef = useRef<THREE.Group>(null);
-  const map = useBodyTexture(dwarf.textureKey);
+  const map = useBodyTexture(selected ? dwarf.textureKey : undefined);
   const moons = MOONS_BY_PLANET[dwarf.id] ?? [];
   const el = DWARF_ELEMENTS[dwarf.id];
   const a = el ? visualSemiMajor(el.distanceAU, trueScale) : dwarf.orbitRadius;
@@ -385,7 +388,7 @@ export function OrbitingDwarf({
           <meshStandardMaterial map={map ?? undefined} color={map ? "#ffffff" : dwarf.color} roughness={0.88} />
         </mesh>
         {moons.map(moon => (
-          <OrbitingMoon key={moon.id} moon={moon} planetRadius={dwarf.visualRadius} paused={paused} speed={speed} screenPos={screenPos} />
+          <OrbitingMoon key={moon.id} moon={moon} focused={moon.id === focusedMoonId} planetRadius={dwarf.visualRadius} paused={paused} speed={speed} screenPos={screenPos} />
         ))}
       </group>
     </group>
@@ -428,14 +431,15 @@ export function PlanetCutaway({
 }
 
 export function GalaxyDisc({
-  object, screenPos, compact,
+  object, screenPos, compact, focused = false,
 }: {
   object: DeepSpaceObject;
   screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
   compact?: boolean;
+  focused?: boolean;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
-  const map = useBodyTexture(object.textureKey);
+  const map = useBodyTexture(focused ? object.textureKey : undefined);
   const pos = compact && object.galaxyViewPosition ? object.galaxyViewPosition : object.position;
   const r = compact ? 0.55 : object.visualRadius;
 
@@ -475,10 +479,11 @@ export function GalaxyDisc({
 }
 
 export function DeepSpaceMarker({
-  object, screenPos,
+  object, screenPos, focused = false,
 }: {
   object: DeepSpaceObject;
   screenPos: React.MutableRefObject<Record<string, { x: number; y: number }>>;
+  focused?: boolean;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const haloRef = useRef<THREE.Mesh>(null);
@@ -495,7 +500,7 @@ export function DeepSpaceMarker({
   });
 
   if (object.type === "Galaxy") {
-    return <GalaxyDisc object={object} screenPos={screenPos} />;
+    return <GalaxyDisc object={object} screenPos={screenPos} focused={focused} />;
   }
 
   if (object.type === "Nebula") {
