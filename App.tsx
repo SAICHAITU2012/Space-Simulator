@@ -732,10 +732,13 @@ export default function App() {
           {/* Content */}
           <ScrollView
             style={ui.sheetContent}
-            contentContainerStyle={{ flexGrow: 1 }}
+            contentContainerStyle={ui.sheetScrollContent}
+            scrollEnabled
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled={true}
+            nestedScrollEnabled
+            directionalLockEnabled
+            scrollEventThrottle={16}
           >
             {section === "universe"  && <UniversePanel selectedPlanet={selectedPlanet} selectedMoon={selectedMoon} selectedDeep={selectedDeep} onFocus={id => { onPlanetTapped(id); }} onMoon={id => onMoonTapped(id)} onDeep={id => onDeepTapped(id)} speed={speed} setSpeed={setSpeed} zoomLevel={zoomLevel} zoomIn={() => setCameraZoom(camRef.current.zoom - 8)} zoomOut={() => setCameraZoom(camRef.current.zoom + 12)} onLearnLink={(url) => Linking.openURL(url).catch(() => undefined)} />}
             {section === "earthhub" && <EarthHubPanel selectedSat={selectedSat} onSelectSat={id => { onSatTapped(id); }} selectedAgencyId={selectedAgencyId} onSelectAgency={id => { setSelectedAgencyId(id === selectedAgencyId ? null : id); }} />}
@@ -810,7 +813,16 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
       </View>
 
       <SafeAreaView style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={hs.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={hs.scrollView}
+          contentContainerStyle={hs.scroll}
+          scrollEnabled
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          directionalLockEnabled
+          scrollEventThrottle={16}
+        >
           <Text style={hs.eyebrow}>🌌  SPACEVERSE</Text>
           <Text style={hs.headline}>Humanity's{"\n"}Presence{"\n"}in Space</Text>
           <Text style={hs.tagline}>
@@ -818,7 +830,7 @@ function HomeScreen({ onEnter, onSection }: { onEnter: () => void; onSection: (s
           </Text>
 
           {/* Agency flags row */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 24 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} directionalLockEnabled style={{ marginBottom: 24 }}>
             <View style={{ flexDirection:"row", gap:8, alignItems:"center" }}>
               {AGENCIES.map(a => (
                 <Pressable key={a.id} style={hs.agencyFlag} onPress={() => onSection("agencies")}>
@@ -2799,10 +2811,12 @@ const ui = StyleSheet.create({
     width:6, height:6, borderRadius:3, backgroundColor:"#4df9ff",
   },
   sheetContent: { flex:1, minHeight: 0 },
+  sheetScrollContent: { paddingBottom: 54 },
 });
 
 const hs = StyleSheet.create({
-  scroll: { paddingHorizontal:22,paddingTop:52,paddingBottom:48 },
+  scrollView: { flex:1 },
+  scroll: { paddingHorizontal:22,paddingTop:52,paddingBottom:92 },
   eyebrow: { color:"#4df9ff",fontSize:11,fontWeight:"900",letterSpacing:2.5,marginBottom:14 },
   headline: { color:"#eef5ff",fontSize:44,fontWeight:"900",letterSpacing:-1,lineHeight:50,marginBottom:16 },
   tagline: { color:"#8ab8d8",fontSize:15.5,lineHeight:24,marginBottom:26 },
